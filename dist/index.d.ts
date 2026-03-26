@@ -8,6 +8,7 @@ type Role = 'desktop' | 'mobile';
 type MessageHandler = (topic: string, envelope: WireEnvelope, role: Role) => void;
 type TopicValidator = (topic: string) => boolean;
 type TokenValidator = (topic: string, token: string | null) => boolean;
+type ConnectHandler = (topic: string) => void;
 type DisconnectHandler = (topic: string, role: Role) => void;
 /**
  * Topic-keyed WebSocket relay. Mounts at /ws.
@@ -28,6 +29,7 @@ declare class WebSocketRelay {
     private validateTopic;
     private validateDesktopToken;
     private onDisconnectCb;
+    private onMobileConnectCb;
     private allowedOrigin;
     private heartbeatTimer;
     constructor(server: Server, options?: {
@@ -48,6 +50,10 @@ declare class WebSocketRelay {
      * Use this to react to mobile disconnects (e.g. reject in-flight requests).
      */
     onDisconnect(handler: DisconnectHandler): void;
+    /** Register a callback invoked when a mobile socket connects (before proof). */
+    onMobileConnect(handler: ConnectHandler): void;
+    /** Forcibly close the mobile socket for a topic (e.g. auth timeout or proof failure). */
+    disconnectMobile(topic: string): void;
     /** Remove a topic entry — call when its session is garbage-collected. */
     removeTopic(topic: string): void;
     /** Push an envelope to the mobile socket (or buffer if disconnected). */
@@ -136,6 +142,7 @@ declare class WalletRelayService {
     private relay;
     private handler;
     private pending;
+    private mobileAuthTimers;
     constructor(opts: WalletRelayServiceOptions);
     /** Create a session and return its QR data URL and desktop WebSocket token. */
     createSession(): Promise<{

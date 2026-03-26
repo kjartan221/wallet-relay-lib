@@ -56,6 +56,7 @@ var WebSocketRelay = class {
     this.validateTopic = null;
     this.validateDesktopToken = null;
     this.onDisconnectCb = null;
+    this.onMobileConnectCb = null;
     this.allowedOrigin = null;
     this.heartbeatTimer = null;
     this.allowedOrigin = options?.allowedOrigin ?? null;
@@ -85,6 +86,18 @@ var WebSocketRelay = class {
    */
   onDisconnect(handler) {
     this.onDisconnectCb = handler;
+  }
+  /** Register a callback invoked when a mobile socket connects (before proof). */
+  onMobileConnect(handler) {
+    this.onMobileConnectCb = handler;
+  }
+  /** Forcibly close the mobile socket for a topic (e.g. auth timeout or proof failure). */
+  disconnectMobile(topic) {
+    const entry = this.topics.get(topic);
+    if (entry?.mobile) {
+      entry.mobile.close(1008, "Authentication failed");
+      entry.mobile = null;
+    }
   }
   /** Remove a topic entry — call when its session is garbage-collected. */
   removeTopic(topic) {
@@ -137,6 +150,7 @@ var WebSocketRelay = class {
     }
     const entry = this.getOrCreateTopic(topic);
     entry[role] = ws;
+    if (role === "mobile") this.onMobileConnectCb?.(topic);
     const now = Date.now();
     const toFlush = entry.buffer.filter((m) => m.expiresAt > now);
     entry.buffer = [];
@@ -405,11 +419,13 @@ var PROTOCOL_ID = [0, "mobile wallet session"];
 
 // src/server/WalletRelayService.ts
 var REQUEST_TIMEOUT_MS = 3e4;
+var MOBILE_AUTH_TIMEOUT_MS = 15e3;
 var WalletRelayService = class {
   constructor(opts) {
     this.opts = opts;
     this.handler = new WalletRequestHandler();
     this.pending = /* @__PURE__ */ new Map();
+    this.mobileAuthTimers = /* @__PURE__ */ new Map();
     this.sessions = new QRSessionManager();
     this.relay = new WebSocketRelay(opts.server, { allowedOrigin: opts.origin });
     this.sessions.onSessionExpired((id) => this.relay.removeTopic(id));
@@ -420,6 +436,15 @@ var WalletRelayService = class {
     this.relay.onValidateDesktopToken((topic, token) => {
       const s = this.sessions.getSession(topic);
       return s !== null && token !== null && token === s.desktopToken;
+    });
+    this.relay.onMobileConnect((topic) => {
+      const s = this.sessions.getSession(topic);
+      if (!s || s.mobileIdentityKey) return;
+      const timer = setTimeout(() => {
+        this.mobileAuthTimers.delete(topic);
+        this.relay.disconnectMobile(topic);
+      }, MOBILE_AUTH_TIMEOUT_MS);
+      this.mobileAuthTimers.set(topic, timer);
     });
     this.relay.onIncoming((topic, envelope, role) => {
       if (role === "mobile") void this.handleMobileMessage(topic, envelope);
@@ -477,6 +502,8 @@ var WalletRelayService = class {
   }
   /** Stop the GC timer, close the WebSocket server, and reject all in-flight requests. */
   stop() {
+    for (const timer of this.mobileAuthTimers.values()) clearTimeout(timer);
+    this.mobileAuthTimers.clear();
     this.rejectPendingForSession(null);
     this.sessions.stop();
     this.relay.close();
@@ -522,7 +549,10 @@ var WalletRelayService = class {
     const session = this.sessions.getSession(topic);
     if (!session) return;
     if (envelope.mobileIdentityKey && session.status !== "expired") {
-      if (session.mobileIdentityKey && session.mobileIdentityKey !== envelope.mobileIdentityKey) return;
+      if (session.mobileIdentityKey && session.mobileIdentityKey !== envelope.mobileIdentityKey) {
+        this.relay.disconnectMobile(topic);
+        return;
+      }
       await this.handlePairingApproved(topic, envelope);
       return;
     }
@@ -557,10 +587,19 @@ var WalletRelayService = class {
         envelope.ciphertext
       );
     } catch {
+      this.relay.disconnectMobile(topic);
       return;
     }
     const msg = this.handler.parseMessage(plaintext);
-    if (msg.params?.mobileIdentityKey && msg.params.mobileIdentityKey !== mobileIdentityKey) return;
+    if (msg.params?.mobileIdentityKey && msg.params.mobileIdentityKey !== mobileIdentityKey) {
+      this.relay.disconnectMobile(topic);
+      return;
+    }
+    const timer = this.mobileAuthTimers.get(topic);
+    if (timer) {
+      clearTimeout(timer);
+      this.mobileAuthTimers.delete(topic);
+    }
     this.sessions.setMobileIdentityKey(topic, mobileIdentityKey);
     this.sessions.setStatus(topic, "connected");
     const ack = this.handler.createProtocolMessage("pairing_ack", { topic });
