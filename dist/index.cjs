@@ -50,11 +50,15 @@ var HEARTBEAT_INTERVAL_MS = 3e4;
 var BUFFER_TTL_MS = 6e4;
 var BUFFER_MAX_PER_TOPIC = 50;
 var WebSocketRelay = class {
-  constructor(server) {
+  constructor(server, options) {
     this.topics = /* @__PURE__ */ new Map();
     this.onMessage = null;
     this.validateTopic = null;
+    this.validateDesktopToken = null;
+    this.onDisconnectCb = null;
+    this.allowedOrigin = null;
     this.heartbeatTimer = null;
+    this.allowedOrigin = options?.allowedOrigin ?? null;
     this.wss = new import_ws.WebSocketServer({ server, path: "/ws", maxPayload: 64 * 1024 });
     this.wss.on("connection", (ws, req) => this.handleConnection(ws, req));
     this.heartbeatTimer = setInterval(() => this.runHeartbeat(), HEARTBEAT_INTERVAL_MS);
@@ -66,6 +70,21 @@ var WebSocketRelay = class {
   /** Register a validator called on each new connection to verify the topic exists. */
   onValidateTopic(validator) {
     this.validateTopic = validator;
+  }
+  /**
+   * Register a validator for role=desktop connections.
+   * Receives the topic and the `token` query parameter (null if absent).
+   * Return false to reject the connection with close code 1008.
+   */
+  onValidateDesktopToken(validator) {
+    this.validateDesktopToken = validator;
+  }
+  /**
+   * Register a callback invoked when a socket disconnects.
+   * Use this to react to mobile disconnects (e.g. reject in-flight requests).
+   */
+  onDisconnect(handler) {
+    this.onDisconnectCb = handler;
   }
   /** Remove a topic entry — call when its session is garbage-collected. */
   removeTopic(topic) {
@@ -98,12 +117,22 @@ var WebSocketRelay = class {
     const url = new URL(req.url ?? "", "http://localhost");
     const topic = url.searchParams.get("topic");
     const role = url.searchParams.get("role");
+    const token = url.searchParams.get("token");
     if (!topic || !role || role !== "desktop" && role !== "mobile") {
       ws.close(1008, "Missing or invalid topic/role");
       return;
     }
+    const origin = req.headers.origin;
+    if (origin && this.allowedOrigin && origin !== this.allowedOrigin) {
+      ws.close(1008, "Origin not allowed");
+      return;
+    }
     if (this.validateTopic && !this.validateTopic(topic)) {
       ws.close(1008, "Unknown or expired session");
+      return;
+    }
+    if (role === "desktop" && this.validateDesktopToken && !this.validateDesktopToken(topic, token)) {
+      ws.close(1008, "Invalid or missing desktop token");
       return;
     }
     const entry = this.getOrCreateTopic(topic);
@@ -134,7 +163,10 @@ var WebSocketRelay = class {
       }
     });
     ws.on("close", () => {
-      if (entry[role] === ws) entry[role] = null;
+      if (entry[role] === ws) {
+        entry[role] = null;
+        this.onDisconnectCb?.(topic, role);
+      }
     });
   }
   getOrCreateTopic(topic) {
@@ -186,12 +218,14 @@ var QRSessionManager = class {
   }
   createSession() {
     const id = (0, import_crypto.randomBytes)(32).toString("base64url");
+    const desktopToken = (0, import_crypto.randomBytes)(24).toString("base64url");
     const now = Date.now();
     const session = {
       id,
       status: "pending",
       createdAt: now,
-      expiresAt: now + SESSION_TTL_MS
+      expiresAt: now + SESSION_TTL_MS,
+      desktopToken
     };
     this.sessions.set(id, session);
     return session;
@@ -377,18 +411,28 @@ var WalletRelayService = class {
     this.handler = new WalletRequestHandler();
     this.pending = /* @__PURE__ */ new Map();
     this.sessions = new QRSessionManager();
-    this.relay = new WebSocketRelay(opts.server);
+    this.relay = new WebSocketRelay(opts.server, { allowedOrigin: opts.origin });
     this.sessions.onSessionExpired((id) => this.relay.removeTopic(id));
     this.relay.onValidateTopic((topic) => {
       const s = this.sessions.getSession(topic);
       return s !== null && s.status !== "expired";
     });
+    this.relay.onValidateDesktopToken((topic, token) => {
+      const s = this.sessions.getSession(topic);
+      return s !== null && token !== null && token === s.desktopToken;
+    });
     this.relay.onIncoming((topic, envelope, role) => {
       if (role === "mobile") void this.handleMobileMessage(topic, envelope);
     });
+    this.relay.onDisconnect((topic, role) => {
+      if (role === "mobile") {
+        this.sessions.setStatus(topic, "disconnected");
+        this.rejectPendingForSession(topic);
+      }
+    });
     this.registerRoutes(opts.app);
   }
-  /** Create a session and return its QR data URL. */
+  /** Create a session and return its QR data URL and desktop WebSocket token. */
   async createSession() {
     const session = this.sessions.createSession();
     const { publicKey: backendIdentityKey } = await this.opts.wallet.getPublicKey({ identityKey: true });
@@ -400,7 +444,7 @@ var WalletRelayService = class {
       origin: this.opts.origin
     });
     const qrDataUrl = await this.sessions.generateQRCode(uri);
-    return { sessionId: session.id, status: session.status, qrDataUrl };
+    return { sessionId: session.id, status: session.status, qrDataUrl, desktopToken: session.desktopToken };
   }
   /** Return session status, or null if not found. */
   getSession(id) {
@@ -428,13 +472,28 @@ var WalletRelayService = class {
         this.pending.delete(rpc.id);
         reject(new Error("Request timed out"));
       }, REQUEST_TIMEOUT_MS);
-      this.pending.set(rpc.id, { resolve, reject, timer });
+      this.pending.set(rpc.id, { sessionId, resolve, reject, timer });
     });
   }
-  /** Stop the GC timer and close the WebSocket server. */
+  /** Stop the GC timer, close the WebSocket server, and reject all in-flight requests. */
   stop() {
+    this.rejectPendingForSession(null);
     this.sessions.stop();
     this.relay.close();
+  }
+  // ── Private helpers ───────────────────────────────────────────────────────────
+  /**
+   * Reject all pending requests belonging to a session.
+   * Pass null to reject every pending request (used on full shutdown).
+   */
+  rejectPendingForSession(sessionId) {
+    for (const [id, pending] of this.pending) {
+      if (sessionId === null || pending.sessionId === sessionId) {
+        clearTimeout(pending.timer);
+        this.pending.delete(id);
+        pending.reject(new Error(sessionId === null ? "Server shutting down" : "Session disconnected"));
+      }
+    }
   }
   // ── Route registration ────────────────────────────────────────────────────────
   registerRoutes(app) {

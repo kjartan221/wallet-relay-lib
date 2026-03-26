@@ -1,5 +1,5 @@
-import { c as WalletLike, d as PairingParams } from './encoding-DvYOfZYT.js';
-export { C as CryptoParams, P as PROTOCOL_ID, e as ParseResult, R as RpcRequest, b as RpcResponse, f as SessionInfo, a as SessionStatus, W as WireEnvelope, g as base64urlToBytes, i as bytesToBase64url, j as decryptEnvelope, k as encryptEnvelope, p as parsePairingUri } from './encoding-DvYOfZYT.js';
+import { c as WalletLike, d as PairingParams } from './encoding-CbAIo4ig.js';
+export { C as CryptoParams, P as PROTOCOL_ID, e as ParseResult, R as RpcRequest, b as RpcResponse, f as SessionInfo, a as SessionStatus, W as WireEnvelope, g as base64urlToBytes, i as bytesToBase64url, j as decryptEnvelope, k as encryptEnvelope, p as parsePairingUri } from './encoding-CbAIo4ig.js';
 import '@bsv/sdk';
 
 type PairingSessionStatus = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';

@@ -67,9 +67,17 @@ This registers three REST routes and the `/ws` WebSocket endpoint automatically:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/session` | Create session, return `{ sessionId, status, qrDataUrl }` |
+| `GET` | `/api/session` | Create session, return `{ sessionId, status, qrDataUrl, desktopToken }` |
 | `GET` | `/api/session/:id` | Poll session status |
 | `POST` | `/api/request/:id` | Relay an RPC call to the mobile wallet |
+
+The `desktopToken` returned by `GET /api/session` must be passed by the desktop when opening its WebSocket connection:
+
+```
+ws://host/ws?topic=<sessionId>&role=desktop&token=<desktopToken>
+```
+
+Keep the token server-side — do not embed it in the QR code.
 
 > **Rate limiting:** `WalletRelayService` registers its routes in the constructor. Apply any Express rate-limit middleware to those paths *before* constructing the service.
 

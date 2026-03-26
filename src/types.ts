@@ -44,6 +44,7 @@ export interface Session {
   status: SessionStatus
   createdAt: number
   expiresAt: number
+  desktopToken: string        // random secret required for role=desktop WS connections
   mobileIdentityKey?: string  // set once on pairing_approved
 }
 

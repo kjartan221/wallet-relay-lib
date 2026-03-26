@@ -31,6 +31,7 @@ interface Session {
     status: SessionStatus;
     createdAt: number;
     expiresAt: number;
+    desktopToken: string;
     mobileIdentityKey?: string;
 }
 interface SessionInfo {

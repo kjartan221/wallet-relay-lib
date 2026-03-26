@@ -18,8 +18,10 @@ interface BufferedMessage {
 }
 
 type Role = 'desktop' | 'mobile'
-type MessageHandler = (topic: string, envelope: WireEnvelope, role: Role) => void
-type TopicValidator = (topic: string) => boolean
+type MessageHandler    = (topic: string, envelope: WireEnvelope, role: Role) => void
+type TopicValidator    = (topic: string) => boolean
+type TokenValidator    = (topic: string, token: string | null) => boolean
+type DisconnectHandler = (topic: string, role: Role) => void
 
 /**
  * Topic-keyed WebSocket relay. Mounts at /ws.
@@ -30,15 +32,21 @@ type TopicValidator = (topic: string) => boolean
  * - Messages from desktop → forwarded to mobile  (or buffered)
  * - Buffered messages are flushed when the other side connects
  * - Heartbeat pings every 30 s; non-responsive sockets are terminated
+ * - Origin header validated against allowedOrigin when present (browser clients only)
+ * - role=desktop connections validated via onValidateDesktopToken callback when set
  */
 export class WebSocketRelay {
   private wss: WebSocketServer
   private topics = new Map<string, TopicEntry>()
   private onMessage: MessageHandler | null = null
   private validateTopic: TopicValidator | null = null
+  private validateDesktopToken: TokenValidator | null = null
+  private onDisconnectCb: DisconnectHandler | null = null
+  private allowedOrigin: string | null = null
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
-  constructor(server: Server) {
+  constructor(server: Server, options?: { allowedOrigin?: string }) {
+    this.allowedOrigin = options?.allowedOrigin ?? null
     this.wss = new WebSocketServer({ server, path: '/ws', maxPayload: 64 * 1024 })
     this.wss.on('connection', (ws, req) => this.handleConnection(ws, req))
     this.heartbeatTimer = setInterval(() => this.runHeartbeat(), HEARTBEAT_INTERVAL_MS)
@@ -52,6 +60,23 @@ export class WebSocketRelay {
   /** Register a validator called on each new connection to verify the topic exists. */
   onValidateTopic(validator: TopicValidator): void {
     this.validateTopic = validator
+  }
+
+  /**
+   * Register a validator for role=desktop connections.
+   * Receives the topic and the `token` query parameter (null if absent).
+   * Return false to reject the connection with close code 1008.
+   */
+  onValidateDesktopToken(validator: TokenValidator): void {
+    this.validateDesktopToken = validator
+  }
+
+  /**
+   * Register a callback invoked when a socket disconnects.
+   * Use this to react to mobile disconnects (e.g. reject in-flight requests).
+   */
+  onDisconnect(handler: DisconnectHandler): void {
+    this.onDisconnectCb = handler
   }
 
   /** Remove a topic entry — call when its session is garbage-collected. */
@@ -89,15 +114,32 @@ export class WebSocketRelay {
   private handleConnection(ws: WebSocket, req: IncomingMessage): void {
     const url = new URL(req.url ?? '', 'http://localhost')
     const topic = url.searchParams.get('topic')
-    const role = url.searchParams.get('role') as Role | null
+    const role  = url.searchParams.get('role') as Role | null
+    const token = url.searchParams.get('token')
 
     if (!topic || !role || (role !== 'desktop' && role !== 'mobile')) {
       ws.close(1008, 'Missing or invalid topic/role')
       return
     }
 
+    // Origin check — browsers always send this header and cannot spoof it.
+    // Native clients (mobile apps, server-to-server) omit it, so we only
+    // enforce when the header is present.
+    const origin = req.headers.origin
+    if (origin && this.allowedOrigin && origin !== this.allowedOrigin) {
+      ws.close(1008, 'Origin not allowed')
+      return
+    }
+
     if (this.validateTopic && !this.validateTopic(topic)) {
       ws.close(1008, 'Unknown or expired session')
+      return
+    }
+
+    // Desktop token — prevents unauthorized clients from squatting the desktop
+    // slot and receiving ciphertext traffic.
+    if (role === 'desktop' && this.validateDesktopToken && !this.validateDesktopToken(topic, token)) {
+      ws.close(1008, 'Invalid or missing desktop token')
       return
     }
 
@@ -136,7 +178,10 @@ export class WebSocketRelay {
     })
 
     ws.on('close', () => {
-      if (entry[role] === ws) entry[role] = null
+      if (entry[role] === ws) {
+        entry[role] = null
+        this.onDisconnectCb?.(topic, role)
+      }
     })
   }
 

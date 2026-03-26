@@ -1,12 +1,14 @@
 import { Server } from 'http';
-import { W as WireEnvelope, S as Session, a as SessionStatus, R as RpcRequest, b as RpcResponse, c as WalletLike } from './encoding-DvYOfZYT.js';
-export { C as CryptoParams, P as PROTOCOL_ID, d as PairingParams, e as ParseResult, f as SessionInfo, g as base64urlToBytes, h as buildPairingUri, i as bytesToBase64url, j as decryptEnvelope, k as encryptEnvelope, p as parsePairingUri } from './encoding-DvYOfZYT.js';
+import { W as WireEnvelope, S as Session, a as SessionStatus, R as RpcRequest, b as RpcResponse, c as WalletLike } from './encoding-CbAIo4ig.js';
+export { C as CryptoParams, P as PROTOCOL_ID, d as PairingParams, e as ParseResult, f as SessionInfo, g as base64urlToBytes, h as buildPairingUri, i as bytesToBase64url, j as decryptEnvelope, k as encryptEnvelope, p as parsePairingUri } from './encoding-CbAIo4ig.js';
 import { Express } from 'express';
 import '@bsv/sdk';
 
 type Role = 'desktop' | 'mobile';
 type MessageHandler = (topic: string, envelope: WireEnvelope, role: Role) => void;
 type TopicValidator = (topic: string) => boolean;
+type TokenValidator = (topic: string, token: string | null) => boolean;
+type DisconnectHandler = (topic: string, role: Role) => void;
 /**
  * Topic-keyed WebSocket relay. Mounts at /ws.
  *
@@ -16,18 +18,36 @@ type TopicValidator = (topic: string) => boolean;
  * - Messages from desktop → forwarded to mobile  (or buffered)
  * - Buffered messages are flushed when the other side connects
  * - Heartbeat pings every 30 s; non-responsive sockets are terminated
+ * - Origin header validated against allowedOrigin when present (browser clients only)
+ * - role=desktop connections validated via onValidateDesktopToken callback when set
  */
 declare class WebSocketRelay {
     private wss;
     private topics;
     private onMessage;
     private validateTopic;
+    private validateDesktopToken;
+    private onDisconnectCb;
+    private allowedOrigin;
     private heartbeatTimer;
-    constructor(server: Server);
+    constructor(server: Server, options?: {
+        allowedOrigin?: string;
+    });
     /** Register a callback for every inbound message from either side. */
     onIncoming(handler: MessageHandler): void;
     /** Register a validator called on each new connection to verify the topic exists. */
     onValidateTopic(validator: TopicValidator): void;
+    /**
+     * Register a validator for role=desktop connections.
+     * Receives the topic and the `token` query parameter (null if absent).
+     * Return false to reject the connection with close code 1008.
+     */
+    onValidateDesktopToken(validator: TokenValidator): void;
+    /**
+     * Register a callback invoked when a socket disconnects.
+     * Use this to react to mobile disconnects (e.g. reject in-flight requests).
+     */
+    onDisconnect(handler: DisconnectHandler): void;
     /** Remove a topic entry — call when its session is garbage-collected. */
     removeTopic(topic: string): void;
     /** Push an envelope to the mobile socket (or buffer if disconnected). */
@@ -117,11 +137,12 @@ declare class WalletRelayService {
     private handler;
     private pending;
     constructor(opts: WalletRelayServiceOptions);
-    /** Create a session and return its QR data URL. */
+    /** Create a session and return its QR data URL and desktop WebSocket token. */
     createSession(): Promise<{
         sessionId: string;
         status: string;
         qrDataUrl: string;
+        desktopToken: string;
     }>;
     /** Return session status, or null if not found. */
     getSession(id: string): {
@@ -133,8 +154,13 @@ declare class WalletRelayService {
      * Resolves with the decrypted RpcResponse or rejects after 30 s.
      */
     sendRequest(sessionId: string, method: string, params: unknown): Promise<RpcResponse>;
-    /** Stop the GC timer and close the WebSocket server. */
+    /** Stop the GC timer, close the WebSocket server, and reject all in-flight requests. */
     stop(): void;
+    /**
+     * Reject all pending requests belonging to a session.
+     * Pass null to reject every pending request (used on full shutdown).
+     */
+    private rejectPendingForSession;
     private registerRoutes;
     private handleMobileMessage;
     private handlePairingApproved;

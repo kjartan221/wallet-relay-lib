@@ -23,6 +23,7 @@ interface WalletRelayServiceOptions {
 }
 
 interface PendingRequest {
+  sessionId: string
   resolve: (response: RpcResponse) => void
   reject: (err: Error) => void
   timer: ReturnType<typeof setTimeout>
@@ -53,7 +54,7 @@ export class WalletRelayService {
 
   constructor(private opts: WalletRelayServiceOptions) {
     this.sessions = new QRSessionManager()
-    this.relay = new WebSocketRelay(opts.server)
+    this.relay = new WebSocketRelay(opts.server, { allowedOrigin: opts.origin })
 
     // B6: clean up relay topic when a session is GC'd
     this.sessions.onSessionExpired(id => this.relay.removeTopic(id))
@@ -64,15 +65,29 @@ export class WalletRelayService {
       return s !== null && s.status !== 'expired'
     })
 
+    // Require a valid desktopToken for role=desktop connections
+    this.relay.onValidateDesktopToken((topic, token) => {
+      const s = this.sessions.getSession(topic)
+      return s !== null && token !== null && token === s.desktopToken
+    })
+
     this.relay.onIncoming((topic, envelope, role) => {
       if (role === 'mobile') void this.handleMobileMessage(topic, envelope)
+    })
+
+    // Reject in-flight requests immediately when the mobile disconnects
+    this.relay.onDisconnect((topic, role) => {
+      if (role === 'mobile') {
+        this.sessions.setStatus(topic, 'disconnected')
+        this.rejectPendingForSession(topic)
+      }
     })
 
     this.registerRoutes(opts.app)
   }
 
-  /** Create a session and return its QR data URL. */
-  async createSession(): Promise<{ sessionId: string; status: string; qrDataUrl: string }> {
+  /** Create a session and return its QR data URL and desktop WebSocket token. */
+  async createSession(): Promise<{ sessionId: string; status: string; qrDataUrl: string; desktopToken: string }> {
     const session = this.sessions.createSession()
     const { publicKey: backendIdentityKey } = await this.opts.wallet.getPublicKey({ identityKey: true })
     const uri = buildPairingUri({
@@ -83,7 +98,7 @@ export class WalletRelayService {
       origin: this.opts.origin,
     })
     const qrDataUrl = await this.sessions.generateQRCode(uri)
-    return { sessionId: session.id, status: session.status, qrDataUrl }
+    return { sessionId: session.id, status: session.status, qrDataUrl, desktopToken: session.desktopToken }
   }
 
   /** Return session status, or null if not found. */
@@ -115,14 +130,31 @@ export class WalletRelayService {
         this.pending.delete(rpc.id)
         reject(new Error('Request timed out'))
       }, REQUEST_TIMEOUT_MS)
-      this.pending.set(rpc.id, { resolve, reject, timer })
+      this.pending.set(rpc.id, { sessionId, resolve, reject, timer })
     })
   }
 
-  /** Stop the GC timer and close the WebSocket server. */
+  /** Stop the GC timer, close the WebSocket server, and reject all in-flight requests. */
   stop(): void {
+    this.rejectPendingForSession(null)
     this.sessions.stop()
     this.relay.close()
+  }
+
+  // ── Private helpers ───────────────────────────────────────────────────────────
+
+  /**
+   * Reject all pending requests belonging to a session.
+   * Pass null to reject every pending request (used on full shutdown).
+   */
+  private rejectPendingForSession(sessionId: string | null): void {
+    for (const [id, pending] of this.pending) {
+      if (sessionId === null || pending.sessionId === sessionId) {
+        clearTimeout(pending.timer)
+        this.pending.delete(id)
+        pending.reject(new Error(sessionId === null ? 'Server shutting down' : 'Session disconnected'))
+      }
+    }
   }
 
   // ── Route registration ────────────────────────────────────────────────────────

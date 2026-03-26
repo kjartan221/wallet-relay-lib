@@ -31,13 +31,15 @@ export class QRSessionManager {
   }
 
   createSession(): Session {
-    const id = randomBytes(32).toString('base64url')
+    const id           = randomBytes(32).toString('base64url')
+    const desktopToken = randomBytes(24).toString('base64url')
     const now = Date.now()
     const session: Session = {
       id,
       status: 'pending',
       createdAt: now,
       expiresAt: now + SESSION_TTL_MS,
+      desktopToken,
     }
     this.sessions.set(id, session)
     return session

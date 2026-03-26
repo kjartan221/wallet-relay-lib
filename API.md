@@ -51,10 +51,12 @@ new WalletRelayService(options: WalletRelayServiceOptions)
 **`createSession()`**
 
 ```ts
-createSession(): Promise<{ sessionId: string; status: string; qrDataUrl: string }>
+createSession(): Promise<{ sessionId: string; status: string; qrDataUrl: string; desktopToken: string }>
 ```
 
-Creates a new pairing session, builds the `wallet://pair?…` URI, and generates a QR code data URL. Returns the session ID, its initial status (`'pending'`), and the base64 QR image.
+Creates a new pairing session, builds the `wallet://pair?…` URI, and generates a QR code data URL. Returns the session ID, its initial status (`'pending'`), the base64 QR image, and a `desktopToken`.
+
+The `desktopToken` is a cryptographically random secret that must be passed as a `?token=` query parameter when the desktop opens its WebSocket connection (`role=desktop`). Keep it server-side — do not embed it in the QR code or share it with the mobile.
 
 ---
 
@@ -320,8 +322,12 @@ Topic-keyed WebSocket bridge. Mounts at `/ws`. Connections use `?topic=<sessionI
 #### Constructor
 
 ```ts
-new WebSocketRelay(server: http.Server)
+new WebSocketRelay(server: http.Server, options?: { allowedOrigin?: string })
 ```
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `allowedOrigin` | `string` | If set, incoming WebSocket connections that include an `Origin` header must match this value exactly or the connection is rejected with close code `1008`. Browser clients always send `Origin` and cannot spoof it. Native clients (React Native, server-to-server) omit the header and are exempt. |
 
 #### Methods
 
@@ -362,6 +368,26 @@ sendToDesktop(topic: string, envelope: WireEnvelope): void
 ```
 
 Sends an envelope to the desktop socket for the given topic. Buffers if the desktop is not connected.
+
+---
+
+**`onValidateDesktopToken(validator)`**
+
+```ts
+onValidateDesktopToken(validator: (topic: string, token: string | null) => boolean): void
+```
+
+Called for every new `role=desktop` connection. Receives the topic and the `token` query parameter (`null` if absent). Return `false` to reject the connection with close code `1008`. Used by `WalletRelayService` to enforce the desktop token generated in `createSession()`.
+
+---
+
+**`onDisconnect(handler)`**
+
+```ts
+onDisconnect(handler: (topic: string, role: 'desktop' | 'mobile') => void): void
+```
+
+Called when any WebSocket socket closes. Use this to react to mobile disconnects — for example, to immediately reject in-flight RPC requests rather than waiting for the 30-second timeout.
 
 ---
 
@@ -696,6 +722,7 @@ interface Session {
   status:            SessionStatus
   createdAt:         number          // Unix ms
   expiresAt:         number          // Unix ms (30 days after creation)
+  desktopToken:      string          // Random secret required for role=desktop WS connections
   mobileIdentityKey?: string         // Set once on pairing_approved
 }
 
