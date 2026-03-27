@@ -18,12 +18,27 @@ export interface WalletRelayServiceOptions {
   app?: Express
   /** HTTP server — WebSocket upgrade handler is attached here. */
   server: Server
-  /** Backend wallet used to encrypt/decrypt messages with mobile. */
+  /**
+   * Backend wallet used to encrypt/decrypt messages with mobile.
+   * Use `ProtoWallet` with a private key stored in an environment variable:
+   * ```ts
+   * import { ProtoWallet, PrivateKey } from '@bsv/sdk'
+   * wallet: new ProtoWallet(PrivateKey.fromWif(process.env['WALLET_WIF']!))
+   * ```
+   * The same key must be used across restarts — the mobile's ECDH shared secret
+   * is derived from the backend's identity key embedded in the QR code.
+   */
   wallet: WalletLike
-  /** ws(s):// base URL of this server (used in the QR pairing URI). */
-  relayUrl: string
-  /** http(s):// URL of the desktop frontend (CORS origin + pairing URI). */
-  origin: string
+  /**
+   * ws(s):// base URL of this server — embedded in the QR pairing URI.
+   * Defaults to the `RELAY_URL` environment variable, then `ws://localhost:3000`.
+   */
+  relayUrl?: string
+  /**
+   * http(s):// URL of the desktop frontend — used for CORS and the pairing URI.
+   * Defaults to the `ORIGIN` environment variable, then `http://localhost:5173`.
+   */
+  origin?: string
   /** Called when a mobile completes pairing and the session transitions to 'connected'. */
   onSessionConnected?: (sessionId: string) => void
   /** Called when a connected mobile disconnects (session transitions to 'disconnected'). */
@@ -69,9 +84,18 @@ export class WalletRelayService {
   private pending = new Map<string, PendingRequest>()
   private mobileAuthTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
+  // Resolved options — always defined after construction
+  private wallet: WalletLike
+  private relayUrl: string
+  private origin: string
+
   constructor(private opts: WalletRelayServiceOptions) {
+    this.wallet   = opts.wallet
+    this.relayUrl = opts.relayUrl ?? process.env['RELAY_URL'] ?? 'ws://localhost:3000'
+    this.origin   = opts.origin   ?? process.env['ORIGIN']   ?? 'http://localhost:5173'
+
     this.sessions = new QRSessionManager()
-    this.relay = new WebSocketRelay(opts.server, { allowedOrigin: opts.origin })
+    this.relay = new WebSocketRelay(opts.server, { allowedOrigin: this.origin })
 
     // B6: clean up relay topic when a session is GC'd
     this.sessions.onSessionExpired(id => this.relay.removeTopic(id))
@@ -122,13 +146,13 @@ export class WalletRelayService {
   /** Create a session and return its QR data URL, pairing URI, and desktop WebSocket token. */
   async createSession(): Promise<{ sessionId: string; status: string; qrDataUrl: string; pairingUri: string; desktopToken: string }> {
     const session = this.sessions.createSession()
-    const { publicKey: backendIdentityKey } = await this.opts.wallet.getPublicKey({ identityKey: true })
+    const { publicKey: backendIdentityKey } = await this.wallet.getPublicKey({ identityKey: true })
     const uri = buildPairingUri({
       sessionId: session.id,
-      relayURL: this.opts.relayUrl,
+      relayURL: this.relayUrl,
       backendIdentityKey,
       protocolID: JSON.stringify(PROTOCOL_ID),
-      origin: this.opts.origin,
+      origin: this.origin,
     })
     const qrDataUrl = await this.sessions.generateQRCode(uri)
     return { sessionId: session.id, status: session.status, qrDataUrl, pairingUri: uri, desktopToken: session.desktopToken }
@@ -153,7 +177,7 @@ export class WalletRelayService {
 
     const rpc = this.handler.createRequest(method, params)
     const ciphertext = await encryptEnvelope(
-      this.opts.wallet,
+      this.wallet,
       { protocolID: PROTOCOL_ID, keyID: sessionId, counterparty: session.mobileIdentityKey },
       JSON.stringify(rpc)
     )
@@ -245,7 +269,7 @@ export class WalletRelayService {
     let plaintext: string
     try {
       plaintext = await decryptEnvelope(
-        this.opts.wallet,
+        this.wallet,
         { protocolID: PROTOCOL_ID, keyID: topic, counterparty: session.mobileIdentityKey },
         envelope.ciphertext
       )
@@ -269,7 +293,7 @@ export class WalletRelayService {
     let plaintext: string
     try {
       plaintext = await decryptEnvelope(
-        this.opts.wallet,
+        this.wallet,
         { protocolID: PROTOCOL_ID, keyID: topic, counterparty: mobileIdentityKey },
         envelope.ciphertext
       )
@@ -295,7 +319,7 @@ export class WalletRelayService {
     // Send pairing_ack to confirm the session is live
     const ack = this.handler.createProtocolMessage('pairing_ack', { topic })
     const ciphertext = await encryptEnvelope(
-      this.opts.wallet,
+      this.wallet,
       { protocolID: PROTOCOL_ID, keyID: topic, counterparty: mobileIdentityKey },
       JSON.stringify(ack)
     )

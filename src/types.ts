@@ -50,9 +50,11 @@ export interface Session {
 }
 
 export interface SessionInfo {
-  sessionId: string
-  status: SessionStatus
-  qrDataUrl?: string
+  sessionId:    string
+  status:       SessionStatus
+  qrDataUrl?:   string   // present on session creation
+  pairingUri?:  string   // present on session creation — use with QRPairingCode / useQRPairing
+  desktopToken?: string  // present on session creation — pass as ?token= in the desktop WS URL
 }
 
 // ── Pairing URI ───────────────────────────────────────────────────────────────
