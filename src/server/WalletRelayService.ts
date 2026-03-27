@@ -10,8 +10,12 @@ import { PROTOCOL_ID } from '../types.js'
 import type { WireEnvelope, RpcResponse } from '../types.js'
 
 export interface WalletRelayServiceOptions {
-  /** Express app — REST routes are registered on init. */
-  app: Express
+  /**
+   * Express app — when provided, REST routes are registered automatically.
+   * Omit when using Next.js (or any other framework): call createSession(),
+   * getSession(), and sendRequest() from your own route handlers instead.
+   */
+  app?: Express
   /** HTTP server — WebSocket upgrade handler is attached here. */
   server: Server
   /** Backend wallet used to encrypt/decrypt messages with mobile. */
@@ -38,15 +42,22 @@ const MOBILE_AUTH_TIMEOUT_MS = 15_000
 
 /**
  * High-level facade that wires together the relay, session manager,
- * and RPC handler into a ready-to-use Express + WebSocket service.
+ * and RPC handler into a ready-to-use WebSocket service.
  *
- * Usage:
+ * Express usage (routes registered automatically):
  * ```ts
  * const relay = new WalletRelayService({ app, server, wallet, relayUrl, origin })
- * // REST routes and WS upgrade are registered automatically.
  * ```
  *
- * Registered routes:
+ * Next.js / custom framework (omit `app`, call methods from your route handlers):
+ * ```ts
+ * const relay = new WalletRelayService({ server, wallet, relayUrl, origin })
+ * // In GET /api/session:        relay.createSession()
+ * // In GET /api/session/:id:    relay.getSession(id)
+ * // In POST /api/request/:id:   relay.sendRequest(id, method, params)
+ * ```
+ *
+ * Express auto-registered routes:
  *   GET  /api/session        — create session, return { sessionId, status, qrDataUrl }
  *   GET  /api/session/:id    — return { sessionId, status }
  *   POST /api/request/:id    — body { method, params } — relay to mobile, return RpcResponse
@@ -105,7 +116,7 @@ export class WalletRelayService {
       }
     })
 
-    this.registerRoutes(opts.app)
+    if (opts.app) this.registerRoutes(opts.app)
   }
 
   /** Create a session and return its QR data URL, pairing URI, and desktop WebSocket token. */
