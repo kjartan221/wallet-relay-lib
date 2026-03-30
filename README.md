@@ -130,7 +130,7 @@ That's the entire backend. `WalletRelayService` registers three REST routes and 
 
 `relayUrl` and `origin` are optional — they default to `process.env.RELAY_URL` / `process.env.ORIGIN`, then `ws://localhost:3000` / `http://localhost:5173`.
 
-> **`desktopToken`** is returned by `GET /api/session` but most apps using the polling approach above don't need it. It is only required if you open a direct desktop WebSocket connection (`/ws?role=desktop&token=<desktopToken>`). If you're just using the REST routes, ignore it.
+> **`desktopToken`** is returned by `GET /api/session` and must be sent as an `X-Desktop-Token` header on every `POST /api/request/:id` call. It ensures that only the frontend that created the session can send wallet requests — even if another client somehow learns the `sessionId`. `useWalletRelayClient` / `WalletRelayClient` handle this automatically. If you are calling `relay.sendRequest()` directly from your own route handlers (Next.js, etc.) you must forward the header yourself — see [Next.js setup](#nextjs-setup) below.
 
 #### Frontend
 
@@ -189,6 +189,65 @@ export function App() {
 `QRDisplay` shows the QR image, a status badge (`pending` / `connected` / `disconnected` / `expired`), and a refresh button when the session expires. Both components are unstyled — pass `className`, `style`, and per-element props to style them. See [API.md](./API.md) for the full prop reference.
 
 </details>
+
+### Next.js setup
+
+When using Next.js (or any framework where you write your own route handlers), omit `app` from `WalletRelayService` and call its methods directly. The key difference from Express is that you must manually forward the `X-Desktop-Token` header on the request route — the library cannot do it for you since it has no access to the incoming request object.
+
+```ts
+// lib/relay.ts — shared singleton
+import { createServer } from 'http'
+import { ProtoWallet, PrivateKey } from '@bsv/sdk'
+import { WalletRelayService } from '@bsv/wallet-relay'
+
+const server = createServer() // Next.js manages the actual HTTP server — pass a dummy
+export const relay = new WalletRelayService({
+  server,
+  wallet: new ProtoWallet(PrivateKey.fromHex(process.env.WALLET_PRIVATE_KEY!)),
+})
+```
+
+```ts
+// app/api/session/route.ts
+import { relay } from '@/lib/relay'
+
+export async function GET() {
+  const info = await relay.createSession()
+  return Response.json(info) // includes desktopToken — WalletRelayClient stores it automatically
+}
+```
+
+```ts
+// app/api/session/[id]/route.ts
+import { relay } from '@/lib/relay'
+
+export async function GET(_req: Request, { params }: { params: { id: string } }) {
+  const info = relay.getSession(params.id)
+  if (!info) return Response.json({ error: 'Session not found' }, { status: 404 })
+  return Response.json(info)
+}
+```
+
+```ts
+// app/api/request/[id]/route.ts
+import { relay } from '@/lib/relay'
+
+export async function POST(req: Request, { params }: { params: { id: string } }) {
+  const { method, params: rpcParams } = await req.json() as { method: string; params: unknown }
+  // Forward the desktop token — required to authenticate the request
+  const token = req.headers.get('x-desktop-token') ?? undefined
+  try {
+    const result = await relay.sendRequest(params.id, method, rpcParams, token)
+    return Response.json(result)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Request failed'
+    const status = msg === 'Invalid desktop token' ? 401 : msg.startsWith('Session is') ? 400 : 504
+    return Response.json({ error: msg }, { status })
+  }
+}
+```
+
+The frontend is identical to the Vite/Express setup — `useWalletRelayClient` works the same regardless of backend framework.
 
 ### 4. Send requests
 

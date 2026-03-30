@@ -3,6 +3,7 @@
 
 export { WebSocketRelay } from './server/WebSocketRelay.js'
 export { QRSessionManager } from './server/QRSessionManager.js'
+export type { QRSessionManagerOptions } from './server/QRSessionManager.js'
 export { WalletRequestHandler } from './server/WalletRequestHandler.js'
 export { WalletRelayService } from './server/WalletRelayService.js'
 export type { WalletRelayServiceOptions } from './server/WalletRelayService.js'

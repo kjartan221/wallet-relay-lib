@@ -1,6 +1,6 @@
 import * as react_jsx_runtime from 'react/jsx-runtime';
 import React from 'react';
-import { a as WalletRelayClientOptions } from './WalletRelayClient-DcLlLvVz.js';
+import { a as WalletRelayClientOptions } from './WalletRelayClient-2E5IFBJT.js';
 import { f as SessionInfo, h as RequestLogEntry, g as WalletMethodName, j as WalletResponse } from './types-UY3FlsXl.js';
 import { WalletClient } from '@bsv/sdk';
 

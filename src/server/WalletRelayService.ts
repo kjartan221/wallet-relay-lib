@@ -43,6 +43,12 @@ export interface WalletRelayServiceOptions {
   onSessionConnected?: (sessionId: string) => void
   /** Called when a connected mobile disconnects (session transitions to 'disconnected'). */
   onSessionDisconnected?: (sessionId: string) => void
+  /**
+   * Maximum number of sessions held in memory at once.
+   * Requests for new sessions beyond this limit are rejected with HTTP 429.
+   * Default: unlimited.
+   */
+  maxSessions?: number
 }
 
 interface PendingRequest {
@@ -94,7 +100,7 @@ export class WalletRelayService {
     this.relayUrl = opts.relayUrl ?? process.env['RELAY_URL'] ?? 'ws://localhost:3000'
     this.origin   = opts.origin   ?? process.env['ORIGIN']   ?? 'http://localhost:5173'
 
-    this.sessions = new QRSessionManager()
+    this.sessions = new QRSessionManager({ maxSessions: opts.maxSessions })
     this.relay = new WebSocketRelay(opts.server, { allowedOrigin: this.origin })
 
     // B6: clean up relay topic when a session is GC'd
@@ -134,6 +140,8 @@ export class WalletRelayService {
     // Reject in-flight requests immediately when the mobile disconnects
     this.relay.onDisconnect((topic, role) => {
       if (role === 'mobile') {
+        const authTimer = this.mobileAuthTimers.get(topic)
+        if (authTimer) { clearTimeout(authTimer); this.mobileAuthTimers.delete(topic) }
         this.sessions.setStatus(topic, 'disconnected')
         this.rejectPendingForSession(topic)
         this.opts.onSessionDisconnected?.(topic)
@@ -168,11 +176,16 @@ export class WalletRelayService {
    * Encrypt an RPC call, relay it to the mobile, and await the response.
    * Rejects if the session is not connected or if the mobile doesn't respond within 30 s.
    */
-  async sendRequest(sessionId: string, method: string, params: unknown): Promise<RpcResponse> {
+  async sendRequest(sessionId: string, method: string, params: unknown, desktopToken?: string): Promise<RpcResponse> {
     const session = this.sessions.getSession(sessionId)
     if (!session || session.status !== 'connected' || !session.mobileIdentityKey) {
       const status = session?.status ?? 'not found'
       throw new Error(`Session is ${status}`)
+    }
+    // Validate desktop token — ensures only the client that created the session
+    // can send requests, even if another client knows the session ID.
+    if (desktopToken !== session.desktopToken) {
+      throw new Error('Invalid desktop token')
     }
 
     const rpc = this.handler.createRequest(method, params)
@@ -223,7 +236,11 @@ export class WalletRelayService {
     app.get('/api/session', (req: Request, res: Response) => {
       void this.createSession()
         .then(info => res.json(info))
-        .catch(err => res.status(500).json({ error: err instanceof Error ? err.message : 'Failed' }))
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : 'Failed'
+          const status = (err as { code?: number }).code === 429 ? 429 : 500
+          res.status(status).json({ error: msg })
+        })
     })
 
     app.get('/api/session/:id', (req: Request, res: Response) => {
@@ -235,12 +252,14 @@ export class WalletRelayService {
     app.post('/api/request/:id', (req: Request, res: Response) => {
       const { method, params } = req.body as { method: string; params: unknown }
       if (!method) { res.status(400).json({ error: 'method is required' }); return }
-      void this.sendRequest(req.params['id'] as string, method, params)
+      const token = req.headers['x-desktop-token'] as string | undefined
+      void this.sendRequest(req.params['id'] as string, method, params, token)
         .then(response => res.json(response))
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : 'Request failed'
-          // Session-not-connected is a client error (4xx); timeout is a gateway error (5xx).
-          const status = msg.startsWith('Session is') ? 400 : 504
+          const status = msg === 'Invalid desktop token' ? 401
+            : msg.startsWith('Session is') ? 400
+            : 504
           res.status(status).json({ error: msg })
         })
     })

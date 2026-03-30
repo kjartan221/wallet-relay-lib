@@ -44,7 +44,7 @@ export interface Session {
   status: SessionStatus
   createdAt: number
   expiresAt: number
-  desktopToken: string        // random secret required for role=desktop WS connections
+  desktopToken: string        // random secret — sent as X-Desktop-Token on POST /api/request/:id
   mobileIdentityKey?: string  // set once on pairing_approved
   pairingStartedAt?: number   // set when mobile WS first connects; prevents race-expiry
 }
@@ -54,7 +54,7 @@ export interface SessionInfo {
   status:       SessionStatus
   qrDataUrl?:   string   // present on session creation
   pairingUri?:  string   // present on session creation — use with QRPairingCode / useQRPairing
-  desktopToken?: string  // present on session creation — pass as ?token= in the desktop WS URL
+  desktopToken?: string  // present on session creation — send as X-Desktop-Token header on POST /api/request/:id
 }
 
 // ── Pairing URI ───────────────────────────────────────────────────────────────

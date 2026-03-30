@@ -88,6 +88,7 @@ var import_react2 = require("react");
 var WalletRelayClient = class {
   constructor(options) {
     this._session = null;
+    this._desktopToken = null;
     this._log = [];
     this._error = null;
     this._pollTimer = null;
@@ -115,10 +116,12 @@ var WalletRelayClient = class {
     this._stopPolling();
     this._expiredCount = 0;
     this._error = null;
+    this._desktopToken = null;
     try {
       const res = await fetch(`${this._apiUrl}/session`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      this._desktopToken = data.desktopToken ?? null;
       this._setSession(data);
       this._startPolling(data.sessionId);
       return data;
@@ -140,9 +143,11 @@ var WalletRelayClient = class {
     const request = { requestId, method, params, timestamp: Date.now() };
     this._addLogEntry({ request, pending: true });
     try {
+      const headers = { "Content-Type": "application/json" };
+      if (this._desktopToken) headers["X-Desktop-Token"] = this._desktopToken;
       const res = await fetch(`${this._apiUrl}/request/${this._session.sessionId}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ method, params })
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -169,6 +174,7 @@ var WalletRelayClient = class {
   /** Stop polling and clean up resources. Call this on component unmount. */
   destroy() {
     this._stopPolling();
+    this._desktopToken = null;
   }
   // ── Private helpers ───────────────────────────────────────────────────────
   _startPolling(sessionId) {

@@ -1,4 +1,4 @@
-import { f as SessionInfo, h as RequestLogEntry, g as WalletMethodName, j as WalletResponse } from './types-UY3FlsXl.cjs';
+import { f as SessionInfo, h as RequestLogEntry, g as WalletMethodName, j as WalletResponse } from './types-UY3FlsXl.js';
 
 interface WalletRelayClientOptions {
     /** Base URL for the relay API. Default: '/api' */
@@ -36,6 +36,7 @@ declare class WalletRelayClient {
     private readonly _onLogChange?;
     private readonly _onError?;
     private _session;
+    private _desktopToken;
     private _log;
     private _error;
     private _pollTimer;

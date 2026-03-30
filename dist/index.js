@@ -171,13 +171,15 @@ var WebSocketRelay = class {
 import { randomBytes } from "crypto";
 var PAIRING_TTL_MS = 120 * 1e3;
 var PAIRING_GRACE_MS = 30 * 1e3;
-var SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
+var PENDING_EXPIRY_MS = PAIRING_TTL_MS + PAIRING_GRACE_MS + 60 * 1e3;
+var SESSION_TTL_MS = 24 * 60 * 60 * 1e3;
 var GC_INTERVAL_MS = 10 * 60 * 1e3;
 var QRSessionManager = class {
-  constructor() {
+  constructor(options) {
     this.sessions = /* @__PURE__ */ new Map();
     this.onExpired = null;
-    this.gcTimer = setInterval(() => this.gc(), GC_INTERVAL_MS);
+    this.maxSessions = options?.maxSessions ?? Infinity;
+    this.gcTimer = setInterval(() => this.gc(), GC_INTERVAL_MS).unref();
   }
   /** Register a callback invoked when a session is garbage-collected. */
   onSessionExpired(cb) {
@@ -188,6 +190,11 @@ var QRSessionManager = class {
     clearInterval(this.gcTimer);
   }
   createSession() {
+    if (this.sessions.size >= this.maxSessions) {
+      const err = new Error("Session limit reached");
+      err.code = 429;
+      throw err;
+    }
     const id = randomBytes(32).toString("base64url");
     const desktopToken = randomBytes(24).toString("base64url");
     const now = Date.now();
@@ -195,7 +202,9 @@ var QRSessionManager = class {
       id,
       status: "pending",
       createdAt: now,
-      expiresAt: now + SESSION_TTL_MS,
+      // Short TTL — extended to SESSION_TTL_MS when the session becomes connected.
+      // This ensures unscanned QR codes are GC'd quickly rather than after 30 days.
+      expiresAt: now + PENDING_EXPIRY_MS,
       desktopToken
     };
     this.sessions.set(id, session);
@@ -217,7 +226,9 @@ var QRSessionManager = class {
   }
   setStatus(id, status) {
     const session = this.sessions.get(id);
-    if (session) session.status = status;
+    if (!session) return;
+    session.status = status;
+    if (status === "connected") session.expiresAt = Date.now() + SESSION_TTL_MS;
   }
   setMobileIdentityKey(id, key) {
     const session = this.sessions.get(id);
@@ -392,7 +403,7 @@ var WalletRelayService = class {
     this.wallet = opts.wallet;
     this.relayUrl = opts.relayUrl ?? process.env["RELAY_URL"] ?? "ws://localhost:3000";
     this.origin = opts.origin ?? process.env["ORIGIN"] ?? "http://localhost:5173";
-    this.sessions = new QRSessionManager();
+    this.sessions = new QRSessionManager({ maxSessions: opts.maxSessions });
     this.relay = new WebSocketRelay(opts.server, { allowedOrigin: this.origin });
     this.sessions.onSessionExpired((id) => this.relay.removeTopic(id));
     this.relay.onValidateTopic((topic) => {
@@ -419,6 +430,11 @@ var WalletRelayService = class {
     });
     this.relay.onDisconnect((topic, role) => {
       if (role === "mobile") {
+        const authTimer = this.mobileAuthTimers.get(topic);
+        if (authTimer) {
+          clearTimeout(authTimer);
+          this.mobileAuthTimers.delete(topic);
+        }
         this.sessions.setStatus(topic, "disconnected");
         this.rejectPendingForSession(topic);
         this.opts.onSessionDisconnected?.(topic);
@@ -449,11 +465,14 @@ var WalletRelayService = class {
    * Encrypt an RPC call, relay it to the mobile, and await the response.
    * Rejects if the session is not connected or if the mobile doesn't respond within 30 s.
    */
-  async sendRequest(sessionId, method, params) {
+  async sendRequest(sessionId, method, params, desktopToken) {
     const session = this.sessions.getSession(sessionId);
     if (!session || session.status !== "connected" || !session.mobileIdentityKey) {
       const status = session?.status ?? "not found";
       throw new Error(`Session is ${status}`);
+    }
+    if (desktopToken !== session.desktopToken) {
+      throw new Error("Invalid desktop token");
     }
     const rpc = this.handler.createRequest(method, params);
     const ciphertext = await encryptEnvelope(
@@ -495,7 +514,11 @@ var WalletRelayService = class {
   // ── Route registration ────────────────────────────────────────────────────────
   registerRoutes(app) {
     app.get("/api/session", (req, res) => {
-      void this.createSession().then((info) => res.json(info)).catch((err) => res.status(500).json({ error: err instanceof Error ? err.message : "Failed" }));
+      void this.createSession().then((info) => res.json(info)).catch((err) => {
+        const msg = err instanceof Error ? err.message : "Failed";
+        const status = err.code === 429 ? 429 : 500;
+        res.status(status).json({ error: msg });
+      });
     });
     app.get("/api/session/:id", (req, res) => {
       const info = this.getSession(req.params["id"]);
@@ -511,9 +534,10 @@ var WalletRelayService = class {
         res.status(400).json({ error: "method is required" });
         return;
       }
-      void this.sendRequest(req.params["id"], method, params).then((response) => res.json(response)).catch((err) => {
+      const token = req.headers["x-desktop-token"];
+      void this.sendRequest(req.params["id"], method, params, token).then((response) => res.json(response)).catch((err) => {
         const msg = err instanceof Error ? err.message : "Request failed";
-        const status = msg.startsWith("Session is") ? 400 : 504;
+        const status = msg === "Invalid desktop token" ? 401 : msg.startsWith("Session is") ? 400 : 504;
         res.status(status).json({ error: msg });
       });
     });

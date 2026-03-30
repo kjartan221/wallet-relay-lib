@@ -68,17 +68,29 @@ declare class WebSocketRelay {
     private runHeartbeat;
 }
 
+interface QRSessionManagerOptions {
+    /**
+     * Maximum number of sessions held in memory at once.
+     * `createSession` throws with code 429 when the cap is reached.
+     * Default: unlimited.
+     */
+    maxSessions?: number;
+}
 /**
  * In-memory session store with QR code generation and automatic GC.
  *
  * Sessions use a 32-byte random base64url ID which also serves as the WS topic
  * and the BSV wallet keyID.
+ *
+ * Pending sessions that were never scanned expire after ~3.5 min.
+ * Connected sessions expire after 30 days.
  */
 declare class QRSessionManager {
     private sessions;
     private gcTimer;
     private onExpired;
-    constructor();
+    private readonly maxSessions;
+    constructor(options?: QRSessionManagerOptions);
     /** Register a callback invoked when a session is garbage-collected. */
     onSessionExpired(cb: (id: string) => void): void;
     /** Stop the GC timer (call on server shutdown). */
@@ -146,6 +158,12 @@ interface WalletRelayServiceOptions {
     onSessionConnected?: (sessionId: string) => void;
     /** Called when a connected mobile disconnects (session transitions to 'disconnected'). */
     onSessionDisconnected?: (sessionId: string) => void;
+    /**
+     * Maximum number of sessions held in memory at once.
+     * Requests for new sessions beyond this limit are rejected with HTTP 429.
+     * Default: unlimited.
+     */
+    maxSessions?: number;
 }
 /**
  * High-level facade that wires together the relay, session manager,
@@ -197,7 +215,7 @@ declare class WalletRelayService {
      * Encrypt an RPC call, relay it to the mobile, and await the response.
      * Rejects if the session is not connected or if the mobile doesn't respond within 30 s.
      */
-    sendRequest(sessionId: string, method: string, params: unknown): Promise<RpcResponse>;
+    sendRequest(sessionId: string, method: string, params: unknown, desktopToken?: string): Promise<RpcResponse>;
     /** Stop the GC timer, close the WebSocket server, and reject all in-flight requests. */
     stop(): void;
     /**
@@ -210,4 +228,4 @@ declare class WalletRelayService {
     private handlePairingApproved;
 }
 
-export { type ConnectHandler, type DisconnectHandler, type MessageHandler, QRSessionManager, type Role, RpcRequest, RpcResponse, Session, SessionStatus, type TokenValidator, type TopicValidator, WalletLike, WalletRelayService, type WalletRelayServiceOptions, WalletRequestHandler, WebSocketRelay, WireEnvelope };
+export { type ConnectHandler, type DisconnectHandler, type MessageHandler, QRSessionManager, type QRSessionManagerOptions, type Role, RpcRequest, RpcResponse, Session, SessionStatus, type TokenValidator, type TopicValidator, WalletLike, WalletRelayService, type WalletRelayServiceOptions, WalletRequestHandler, WebSocketRelay, WireEnvelope };

@@ -38,6 +38,7 @@ export class WalletRelayClient {
   private readonly _onError?: (error: string) => void
 
   private _session: SessionInfo | null = null
+  private _desktopToken: string | null = null
   private _log: RequestLogEntry[] = []
   private _error: string | null = null
   private _pollTimer: ReturnType<typeof setInterval> | null = null
@@ -63,11 +64,13 @@ export class WalletRelayClient {
     this._stopPolling()
     this._expiredCount = 0
     this._error = null
+    this._desktopToken = null
 
     try {
       const res = await fetch(`${this._apiUrl}/session`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = (await res.json()) as SessionInfo
+      this._desktopToken = data.desktopToken ?? null
       this._setSession(data)
       this._startPolling(data.sessionId)
       return data
@@ -92,9 +95,11 @@ export class WalletRelayClient {
     this._addLogEntry({ request, pending: true })
 
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (this._desktopToken) headers['X-Desktop-Token'] = this._desktopToken
       const res = await fetch(`${this._apiUrl}/request/${this._session.sessionId}`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body:    JSON.stringify({ method, params }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -122,6 +127,7 @@ export class WalletRelayClient {
   /** Stop polling and clean up resources. Call this on component unmount. */
   destroy(): void {
     this._stopPolling()
+    this._desktopToken = null
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────
