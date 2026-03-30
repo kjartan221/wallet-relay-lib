@@ -61,12 +61,15 @@ export function useWalletRelayClient(options?: UseWalletRelayClientOptions) {
 
   useEffect(() => {
     if (options?.autoCreate === false) return
-    // Guard against React StrictMode double-invocation — the ref persists across
-    // the simulated unmount/remount, so the second call is skipped.
     if (createdRef.current) return
     createdRef.current = true
-    void createSession()
-    return () => ensureClient().destroy()
+    const timer = setTimeout(() => { void createSession() }, 0)
+    return () => {
+      clearTimeout(timer)
+      createdRef.current = false
+      clientRef.current?.destroy()
+      clientRef.current = null
+    }
   }, [createSession]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return { session, log, error, createSession, sendRequest }

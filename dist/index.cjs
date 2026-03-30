@@ -135,10 +135,12 @@ var WebSocketRelay = class {
       ws.close(1008, "Missing or invalid topic/role");
       return;
     }
-    const origin = req.headers.origin;
-    if (origin && this.allowedOrigin && origin !== this.allowedOrigin) {
-      ws.close(1008, "Origin not allowed");
-      return;
+    if (role === "desktop") {
+      const origin = req.headers.origin;
+      if (origin && this.allowedOrigin && origin !== this.allowedOrigin) {
+        ws.close(1008, "Origin not allowed");
+        return;
+      }
     }
     if (this.validateTopic && !this.validateTopic(topic)) {
       ws.close(1008, "Unknown or expired session");

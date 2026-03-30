@@ -139,12 +139,15 @@ export class WebSocketRelay {
     }
 
     // Origin check — browsers always send this header and cannot spoof it.
-    // Native clients (mobile apps, server-to-server) omit it, so we only
-    // enforce when the header is present.
-    const origin = req.headers.origin
-    if (origin && this.allowedOrigin && origin !== this.allowedOrigin) {
-      ws.close(1008, 'Origin not allowed')
-      return
+    // Only enforce for role=desktop (browser clients). Mobile clients are native
+    // apps whose WebSocket implementations may send unexpected Origin values
+    // (e.g. React Native on iOS sends "http://localhost" without a port).
+    if (role === 'desktop') {
+      const origin = req.headers.origin
+      if (origin && this.allowedOrigin && origin !== this.allowedOrigin) {
+        ws.close(1008, 'Origin not allowed')
+        return
+      }
     }
 
     if (this.validateTopic && !this.validateTopic(topic)) {

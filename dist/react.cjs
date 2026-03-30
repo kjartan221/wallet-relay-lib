@@ -241,8 +241,15 @@ function useWalletRelayClient(options) {
     if (options?.autoCreate === false) return;
     if (createdRef.current) return;
     createdRef.current = true;
-    void createSession();
-    return () => ensureClient().destroy();
+    const timer = setTimeout(() => {
+      void createSession();
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      createdRef.current = false;
+      clientRef.current?.destroy();
+      clientRef.current = null;
+    };
   }, [createSession]);
   return { session, log, error, createSession, sendRequest };
 }
@@ -294,26 +301,29 @@ function WalletConnectionModal({
   ...rootProps
 }) {
   const [status, setStatus] = (0, import_react3.useState)("detecting");
+  const onLocalWalletRef = (0, import_react3.useRef)(onLocalWallet);
+  onLocalWalletRef.current = onLocalWallet;
   (0, import_react3.useEffect)(() => {
     let cancelled = false;
-    async function detect() {
+    const timer = setTimeout(async () => {
+      if (cancelled) return;
       try {
         const wallet = new import_sdk.WalletClient("auto");
         const ok = await wallet.isAuthenticated();
         if (!ok) throw new Error("not authenticated");
         if (!cancelled) {
           setStatus("available");
-          onLocalWallet(wallet);
+          onLocalWalletRef.current(wallet);
         }
       } catch {
         if (!cancelled) setStatus("unavailable");
       }
-    }
-    void detect();
+    }, 0);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
-  }, [onLocalWallet]);
+  }, []);
   if (status !== "unavailable") return null;
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { "data-wallet-detection": status, ...rootProps, children: children ?? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
     /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(

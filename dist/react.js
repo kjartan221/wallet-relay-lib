@@ -210,8 +210,15 @@ function useWalletRelayClient(options) {
     if (options?.autoCreate === false) return;
     if (createdRef.current) return;
     createdRef.current = true;
-    void createSession();
-    return () => ensureClient().destroy();
+    const timer = setTimeout(() => {
+      void createSession();
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      createdRef.current = false;
+      clientRef.current?.destroy();
+      clientRef.current = null;
+    };
   }, [createSession]);
   return { session, log, error, createSession, sendRequest };
 }
@@ -248,7 +255,7 @@ function QRDisplay({
 }
 
 // src/react/WalletConnectionModal.tsx
-import { useEffect as useEffect2, useState as useState2 } from "react";
+import { useEffect as useEffect2, useRef as useRef2, useState as useState2 } from "react";
 import { WalletClient } from "@bsv/sdk";
 import { Fragment, jsx as jsx3, jsxs as jsxs2 } from "react/jsx-runtime";
 function WalletConnectionModal({
@@ -263,26 +270,29 @@ function WalletConnectionModal({
   ...rootProps
 }) {
   const [status, setStatus] = useState2("detecting");
+  const onLocalWalletRef = useRef2(onLocalWallet);
+  onLocalWalletRef.current = onLocalWallet;
   useEffect2(() => {
     let cancelled = false;
-    async function detect() {
+    const timer = setTimeout(async () => {
+      if (cancelled) return;
       try {
         const wallet = new WalletClient("auto");
         const ok = await wallet.isAuthenticated();
         if (!ok) throw new Error("not authenticated");
         if (!cancelled) {
           setStatus("available");
-          onLocalWallet(wallet);
+          onLocalWalletRef.current(wallet);
         }
       } catch {
         if (!cancelled) setStatus("unavailable");
       }
-    }
-    void detect();
+    }, 0);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
-  }, [onLocalWallet]);
+  }, []);
   if (status !== "unavailable") return null;
   return /* @__PURE__ */ jsx3("div", { "data-wallet-detection": status, ...rootProps, children: children ?? /* @__PURE__ */ jsxs2(Fragment, { children: [
     /* @__PURE__ */ jsx3(

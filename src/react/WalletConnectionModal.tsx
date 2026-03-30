@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { WalletClient } from '@bsv/sdk'
 
 type DetectionStatus = 'detecting' | 'available' | 'unavailable'
@@ -58,25 +58,27 @@ export function WalletConnectionModal({
   ...rootProps
 }: WalletConnectionModalProps) {
   const [status, setStatus] = useState<DetectionStatus>('detecting')
+  const onLocalWalletRef = useRef(onLocalWallet)
+  onLocalWalletRef.current = onLocalWallet
 
   useEffect(() => {
     let cancelled = false
-    async function detect() {
+    const timer = setTimeout(async () => {
+      if (cancelled) return
       try {
         const wallet = new WalletClient('auto')
         const ok = await wallet.isAuthenticated()
         if (!ok) throw new Error('not authenticated')
         if (!cancelled) {
           setStatus('available')
-          onLocalWallet(wallet)
+          onLocalWalletRef.current(wallet)
         }
       } catch {
         if (!cancelled) setStatus('unavailable')
       }
-    }
-    void detect()
-    return () => { cancelled = true }
-  }, [onLocalWallet])
+    }, 0)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [])
 
   if (status !== 'unavailable') return null
 
