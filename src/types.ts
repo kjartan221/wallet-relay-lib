@@ -77,10 +77,25 @@ export type ParseResult =
 // ── Frontend request log types ────────────────────────────────────────────────
 // Used by WalletRelayClient and the React components exported from qr-lib/react.
 
+/**
+ * The wallet RPC methods that can be called on a paired mobile wallet.
+ * Matches the default implemented method set in WalletPairingSession.
+ */
+export type WalletMethodName =
+  | 'getPublicKey'
+  | 'listOutputs'
+  | 'createAction'
+  | 'signAction'
+  | 'listActions'
+  | 'internalizeAction'
+  | 'acquireCertificate'
+  | 'relinquishCertificate'
+  | 'revealCounterpartyKeyLinkage'
+
 /** A wallet RPC request tracked by WalletRelayClient. */
 export interface WalletRequest {
   requestId: string
-  method: string
+  method: WalletMethodName
   params: unknown
   timestamp: number
 }

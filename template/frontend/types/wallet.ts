@@ -1,15 +1,16 @@
 /**
  * UI-layer types for WalletActions and RequestLog.
  *
- * WalletRequest, WalletResponse, and RequestLogEntry are provided by the
- * library and re-exported here so existing component imports keep working.
+ * WalletRequest, WalletResponse, RequestLogEntry, and WalletMethodName are
+ * provided by the library and re-exported here so existing component imports
+ * keep working.
  *
  * TODO: Extend WalletMethod with any additional methods your app will call
  *       on the mobile wallet (e.g. 'createAction', 'signAction').
- *       Keep this in sync with the actions array in WalletActions.tsx.
+ *       Keep this in sync with the actions array in components/WalletActions.tsx.
  */
 
-export type { WalletRequest, WalletResponse, RequestLogEntry } from 'qr-lib/client'
+export type { WalletRequest, WalletResponse, RequestLogEntry, WalletMethodName } from 'qr-lib/client'
 
 export type WalletMethod =
   | 'getPublicKey'

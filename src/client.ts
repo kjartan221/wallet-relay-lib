@@ -33,6 +33,7 @@ export type {
   SessionStatus,
   PairingParams,
   ParseResult,
+  WalletMethodName,
   WalletRequest,
   WalletResponse,
   RequestLogEntry,

@@ -1,4 +1,4 @@
-import { f as SessionInfo, g as RequestLogEntry, i as WalletResponse } from './types-BuCbfU78.js';
+import { f as SessionInfo, h as RequestLogEntry, g as WalletMethodName, j as WalletResponse } from './types-C_R4CVqb.cjs';
 
 interface WalletRelayClientOptions {
     /** Base URL for the relay API. Default: '/api' */
@@ -54,7 +54,7 @@ declare class WalletRelayClient {
      * Appends the request (and eventually its response) to the log.
      * Throws if there is no active session.
      */
-    sendRequest(method: string, params?: unknown): Promise<WalletResponse>;
+    sendRequest(method: WalletMethodName, params?: unknown): Promise<WalletResponse>;
     /** Stop polling and clean up resources. Call this on component unmount. */
     destroy(): void;
     private _startPolling;

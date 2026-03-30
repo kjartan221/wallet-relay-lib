@@ -1,5 +1,5 @@
 import type { WalletProtocol } from '@bsv/sdk'
-import type { WalletLike, PairingParams, WireEnvelope, RpcRequest, RpcResponse } from '../types.js'
+import type { WalletLike, PairingParams, WireEnvelope, RpcRequest, RpcResponse, WalletMethodName } from '../types.js'
 import { encryptEnvelope, decryptEnvelope, type CryptoParams } from '../shared/crypto.js'
 
 export type PairingSessionStatus = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error'
@@ -8,7 +8,7 @@ export type PairingSessionStatus = 'idle' | 'connecting' | 'connected' | 'discon
  * The wallet methods implemented by the BSV Browser mobile app.
  * Used as the default for `WalletPairingSessionOptions.implementedMethods`.
  */
-export const DEFAULT_IMPLEMENTED_METHODS = new Set([
+export const DEFAULT_IMPLEMENTED_METHODS: ReadonlySet<WalletMethodName> = new Set<WalletMethodName>([
   'getPublicKey', 'listOutputs', 'createAction', 'signAction',
   'listActions', 'internalizeAction', 'acquireCertificate',
   'relinquishCertificate', 'revealCounterpartyKeyLinkage',
@@ -18,7 +18,7 @@ export const DEFAULT_IMPLEMENTED_METHODS = new Set([
  * Methods approved without user interaction by default.
  * Used as the default for `WalletPairingSessionOptions.autoApproveMethods`.
  */
-export const DEFAULT_AUTO_APPROVE_METHODS = new Set(['getPublicKey'])
+export const DEFAULT_AUTO_APPROVE_METHODS: ReadonlySet<WalletMethodName> = new Set<WalletMethodName>(['getPublicKey'])
 
 /** Return a result or an error string — used for the onRequest handler. */
 export type RequestHandler = (method: string, params: unknown) => Promise<unknown>
@@ -29,13 +29,13 @@ export interface WalletPairingSessionOptions {
    * Requests for any other method receive a 501 without invoking onRequest or onApprovalRequired.
    * Defaults to {@link DEFAULT_IMPLEMENTED_METHODS} (the full BSV Browser method set).
    */
-  implementedMethods?: Set<string>
+  implementedMethods?: ReadonlySet<string>
 
   /**
    * Subset of implementedMethods that are executed without calling onApprovalRequired.
    * Defaults to {@link DEFAULT_AUTO_APPROVE_METHODS} (`getPublicKey` only).
    */
-  autoApproveMethods?: Set<string>
+  autoApproveMethods?: ReadonlySet<string>
 
   /**
    * Called for every implemented method that is not in autoApproveMethods.
@@ -87,8 +87,8 @@ export class WalletPairingSession {
   private protocolID: WalletProtocol
   private mobileIdentityKey: string | null = null
   private requestHandler: RequestHandler | null = null
-  private readonly implementedMethods: Set<string>
-  private readonly autoApproveMethods: Set<string>
+  private readonly implementedMethods: ReadonlySet<string>
+  private readonly autoApproveMethods: ReadonlySet<string>
 
   private listeners: {
     connected: Array<() => void>

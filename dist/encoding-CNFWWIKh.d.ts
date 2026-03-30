@@ -1,4 +1,4 @@
-import { e as ParseResult, c as WalletLike } from './types-BuCbfU78.cjs';
+import { e as ParseResult, c as WalletLike } from './types-C_R4CVqb.js';
 import { WalletProtocol } from '@bsv/sdk';
 
 /**

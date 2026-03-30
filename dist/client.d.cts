@@ -1,7 +1,7 @@
-import { c as WalletLike, d as PairingParams } from './types-BuCbfU78.cjs';
-export { P as PROTOCOL_ID, e as ParseResult, g as RequestLogEntry, R as RpcRequest, b as RpcResponse, f as SessionInfo, a as SessionStatus, h as WalletRequest, i as WalletResponse, W as WireEnvelope } from './types-BuCbfU78.cjs';
-export { W as WalletRelayClient, a as WalletRelayClientOptions } from './WalletRelayClient-CNC1IDdh.cjs';
-export { C as CryptoParams, b as base64urlToBytes, c as bytesToBase64url, d as decryptEnvelope, e as encryptEnvelope, p as parsePairingUri } from './encoding-DP9bmbns.cjs';
+import { g as WalletMethodName, c as WalletLike, d as PairingParams } from './types-C_R4CVqb.cjs';
+export { P as PROTOCOL_ID, e as ParseResult, h as RequestLogEntry, R as RpcRequest, b as RpcResponse, f as SessionInfo, a as SessionStatus, i as WalletRequest, j as WalletResponse, W as WireEnvelope } from './types-C_R4CVqb.cjs';
+export { W as WalletRelayClient, a as WalletRelayClientOptions } from './WalletRelayClient-BhaQiGsI.cjs';
+export { C as CryptoParams, b as base64urlToBytes, c as bytesToBase64url, d as decryptEnvelope, e as encryptEnvelope, p as parsePairingUri } from './encoding-kPoQgIAg.cjs';
 import '@bsv/sdk';
 
 type PairingSessionStatus = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
@@ -9,12 +9,12 @@ type PairingSessionStatus = 'idle' | 'connecting' | 'connected' | 'disconnected'
  * The wallet methods implemented by the BSV Browser mobile app.
  * Used as the default for `WalletPairingSessionOptions.implementedMethods`.
  */
-declare const DEFAULT_IMPLEMENTED_METHODS: Set<string>;
+declare const DEFAULT_IMPLEMENTED_METHODS: ReadonlySet<WalletMethodName>;
 /**
  * Methods approved without user interaction by default.
  * Used as the default for `WalletPairingSessionOptions.autoApproveMethods`.
  */
-declare const DEFAULT_AUTO_APPROVE_METHODS: Set<string>;
+declare const DEFAULT_AUTO_APPROVE_METHODS: ReadonlySet<WalletMethodName>;
 /** Return a result or an error string — used for the onRequest handler. */
 type RequestHandler = (method: string, params: unknown) => Promise<unknown>;
 interface WalletPairingSessionOptions {
@@ -23,12 +23,12 @@ interface WalletPairingSessionOptions {
      * Requests for any other method receive a 501 without invoking onRequest or onApprovalRequired.
      * Defaults to {@link DEFAULT_IMPLEMENTED_METHODS} (the full BSV Browser method set).
      */
-    implementedMethods?: Set<string>;
+    implementedMethods?: ReadonlySet<string>;
     /**
      * Subset of implementedMethods that are executed without calling onApprovalRequired.
      * Defaults to {@link DEFAULT_AUTO_APPROVE_METHODS} (`getPublicKey` only).
      */
-    autoApproveMethods?: Set<string>;
+    autoApproveMethods?: ReadonlySet<string>;
     /**
      * Called for every implemented method that is not in autoApproveMethods.
      * Return true to approve, false to send a 4001 User Rejected response.
@@ -118,4 +118,4 @@ declare class WalletPairingSession {
     private handleRpc;
 }
 
-export { DEFAULT_AUTO_APPROVE_METHODS, DEFAULT_IMPLEMENTED_METHODS, PairingParams, type PairingSessionStatus, type RequestHandler, WalletLike, WalletPairingSession, type WalletPairingSessionOptions };
+export { DEFAULT_AUTO_APPROVE_METHODS, DEFAULT_IMPLEMENTED_METHODS, PairingParams, type PairingSessionStatus, type RequestHandler, WalletLike, WalletMethodName, WalletPairingSession, type WalletPairingSessionOptions };

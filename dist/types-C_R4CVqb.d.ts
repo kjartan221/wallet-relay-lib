@@ -59,10 +59,15 @@ type ParseResult = {
     params: null;
     error: string;
 };
+/**
+ * The wallet RPC methods that can be called on a paired mobile wallet.
+ * Matches the default implemented method set in WalletPairingSession.
+ */
+type WalletMethodName = 'getPublicKey' | 'listOutputs' | 'createAction' | 'signAction' | 'listActions' | 'internalizeAction' | 'acquireCertificate' | 'relinquishCertificate' | 'revealCounterpartyKeyLinkage';
 /** A wallet RPC request tracked by WalletRelayClient. */
 interface WalletRequest {
     requestId: string;
-    method: string;
+    method: WalletMethodName;
     params: unknown;
     timestamp: number;
 }
@@ -83,4 +88,4 @@ interface RequestLogEntry {
     pending: boolean;
 }
 
-export { PROTOCOL_ID as P, type RpcRequest as R, type Session as S, type WireEnvelope as W, type SessionStatus as a, type RpcResponse as b, type WalletLike as c, type PairingParams as d, type ParseResult as e, type SessionInfo as f, type RequestLogEntry as g, type WalletRequest as h, type WalletResponse as i };
+export { PROTOCOL_ID as P, type RpcRequest as R, type Session as S, type WireEnvelope as W, type SessionStatus as a, type RpcResponse as b, type WalletLike as c, type PairingParams as d, type ParseResult as e, type SessionInfo as f, type WalletMethodName as g, type RequestLogEntry as h, type WalletRequest as i, type WalletResponse as j };

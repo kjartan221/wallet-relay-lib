@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { WalletRelayClient, type WalletRelayClientOptions } from '../client/WalletRelayClient.js'
-import type { SessionInfo, RequestLogEntry, WalletResponse } from '../types.js'
+import type { SessionInfo, RequestLogEntry, WalletResponse, WalletMethodName } from '../types.js'
 
 export type UseWalletRelayClientOptions = Omit<
   WalletRelayClientOptions,
@@ -54,7 +54,7 @@ export function useWalletRelayClient(options?: UseWalletRelayClientOptions) {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendRequest = useCallback(
-    async (method: string, params?: unknown): Promise<WalletResponse> =>
+    async (method: WalletMethodName, params?: unknown): Promise<WalletResponse> =>
       ensureClient().sendRequest(method, params),
     [] // eslint-disable-line react-hooks/exhaustive-deps
   )

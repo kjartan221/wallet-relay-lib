@@ -1,4 +1,4 @@
-import type { SessionInfo, WalletRequest, WalletResponse, RequestLogEntry } from '../types.js'
+import type { SessionInfo, WalletRequest, WalletResponse, RequestLogEntry, WalletMethodName } from '../types.js'
 
 export interface WalletRelayClientOptions {
   /** Base URL for the relay API. Default: '/api' */
@@ -84,7 +84,7 @@ export class WalletRelayClient {
    * Appends the request (and eventually its response) to the log.
    * Throws if there is no active session.
    */
-  async sendRequest(method: string, params: unknown = {}): Promise<WalletResponse> {
+  async sendRequest(method: WalletMethodName, params: unknown = {}): Promise<WalletResponse> {
     if (!this._session) throw new Error('No active session')
 
     const requestId = crypto.randomUUID()
