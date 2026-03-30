@@ -20,8 +20,12 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/react.tsx
 var react_exports = {};
 __export(react_exports, {
+  QRDisplay: () => QRDisplay,
   QRPairingCode: () => QRPairingCode,
-  useQRPairing: () => useQRPairing
+  RequestLog: () => RequestLog,
+  WalletConnectionModal: () => WalletConnectionModal,
+  useQRPairing: () => useQRPairing,
+  useWalletRelayClient: () => useWalletRelayClient
 });
 module.exports = __toCommonJS(react_exports);
 
@@ -76,9 +80,284 @@ function QRPairingCode({
     }
   );
 }
+
+// src/react/useWalletRelayClient.ts
+var import_react2 = require("react");
+
+// src/client/WalletRelayClient.ts
+var WalletRelayClient = class {
+  constructor(options) {
+    this._session = null;
+    this._log = [];
+    this._error = null;
+    this._pollTimer = null;
+    this._expiredCount = 0;
+    this._apiUrl = (options?.apiUrl ?? "/api").replace(/\/$/, "");
+    this._pollInterval = options?.pollInterval ?? 3e3;
+    this._onSessionChange = options?.onSessionChange;
+    this._onLogChange = options?.onLogChange;
+    this._onError = options?.onError;
+  }
+  get session() {
+    return this._session;
+  }
+  get log() {
+    return this._log;
+  }
+  get error() {
+    return this._error;
+  }
+  /**
+   * Create a new pairing session and start polling for status changes.
+   * Any previously active poll loop is stopped and replaced.
+   */
+  async createSession() {
+    this._stopPolling();
+    this._expiredCount = 0;
+    this._error = null;
+    try {
+      const res = await fetch(`${this._apiUrl}/session`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      this._setSession(data);
+      this._startPolling(data.sessionId);
+      return data;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to create session";
+      this._error = msg;
+      this._onError?.(msg);
+      throw new Error(msg);
+    }
+  }
+  /**
+   * Send an RPC request to the connected mobile wallet.
+   * Appends the request (and eventually its response) to the log.
+   * Throws if there is no active session.
+   */
+  async sendRequest(method, params = {}) {
+    if (!this._session) throw new Error("No active session");
+    const requestId = crypto.randomUUID();
+    const request = { requestId, method, params, timestamp: Date.now() };
+    this._addLogEntry({ request, pending: true });
+    try {
+      const res = await fetch(`${this._apiUrl}/request/${this._session.sessionId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method, params })
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const rpc = await res.json();
+      const response = {
+        requestId,
+        result: rpc.result,
+        error: rpc.error,
+        timestamp: Date.now()
+      };
+      this._resolveLogEntry(requestId, response);
+      return response;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Request failed";
+      const response = {
+        requestId,
+        error: { code: 500, message: msg },
+        timestamp: Date.now()
+      };
+      this._resolveLogEntry(requestId, response);
+      throw new Error(msg);
+    }
+  }
+  /** Stop polling and clean up resources. Call this on component unmount. */
+  destroy() {
+    this._stopPolling();
+  }
+  // ── Private helpers ───────────────────────────────────────────────────────
+  _startPolling(sessionId) {
+    this._pollTimer = setInterval(async () => {
+      try {
+        const res = await fetch(`${this._apiUrl}/session/${sessionId}`);
+        if (!res.ok) return;
+        const updated = await res.json();
+        this._setSession({ ...this._session, ...updated });
+        if (updated.status === "expired") {
+          if (++this._expiredCount >= 2) this._stopPolling();
+        } else {
+          this._expiredCount = 0;
+        }
+      } catch {
+      }
+    }, this._pollInterval);
+  }
+  _stopPolling() {
+    if (this._pollTimer !== null) {
+      clearInterval(this._pollTimer);
+      this._pollTimer = null;
+    }
+  }
+  _setSession(session) {
+    this._session = session;
+    this._onSessionChange?.(session);
+  }
+  _addLogEntry(entry) {
+    this._log = [entry, ...this._log];
+    this._onLogChange?.(this._log);
+  }
+  _resolveLogEntry(requestId, response) {
+    this._log = this._log.map(
+      (e) => e.request.requestId === requestId ? { ...e, response, pending: false } : e
+    );
+    this._onLogChange?.(this._log);
+  }
+};
+
+// src/react/useWalletRelayClient.ts
+function useWalletRelayClient(options) {
+  const [session, setSession] = (0, import_react2.useState)(null);
+  const [log, setLog] = (0, import_react2.useState)([]);
+  const [error, setError] = (0, import_react2.useState)(null);
+  const clientRef = (0, import_react2.useRef)(null);
+  const createdRef = (0, import_react2.useRef)(false);
+  function ensureClient() {
+    if (!clientRef.current) {
+      clientRef.current = new WalletRelayClient({
+        apiUrl: options?.apiUrl,
+        pollInterval: options?.pollInterval,
+        onSessionChange: setSession,
+        onLogChange: setLog,
+        onError: setError
+      });
+    }
+    return clientRef.current;
+  }
+  const createSession = (0, import_react2.useCallback)(async () => {
+    setError(null);
+    return ensureClient().createSession();
+  }, []);
+  const sendRequest = (0, import_react2.useCallback)(
+    async (method, params) => ensureClient().sendRequest(method, params),
+    []
+    // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  (0, import_react2.useEffect)(() => {
+    if (options?.autoCreate === false) return;
+    if (createdRef.current) return;
+    createdRef.current = true;
+    void createSession();
+    return () => ensureClient().destroy();
+  }, [createSession]);
+  return { session, log, error, createSession, sendRequest };
+}
+
+// src/react/QRDisplay.tsx
+var import_jsx_runtime2 = require("react/jsx-runtime");
+var STATUS_TEXT = {
+  pending: "Waiting for mobile...",
+  connected: "Mobile connected",
+  disconnected: "Mobile disconnected",
+  expired: "Session expired"
+};
+function QRDisplay({
+  session,
+  onRefresh,
+  loadingProps,
+  statusProps,
+  refreshButtonProps,
+  qrProps,
+  children,
+  ...rootProps
+}) {
+  if (!session) {
+    return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { "data-state": "loading", ...loadingProps });
+  }
+  const { status, qrDataUrl, pairingUri } = session;
+  const statusText = STATUS_TEXT[status] ?? status;
+  const isExpired = status === "expired";
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { "data-state": status, ...rootProps, children: [
+    qrDataUrl && pairingUri ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(QRPairingCode, { qrDataUrl, pairingUri, ...qrProps }) : children,
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { "data-qr-status": status, ...statusProps, children: statusText }),
+    isExpired && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", onClick: onRefresh, ...refreshButtonProps, children: "Generate new QR" })
+  ] });
+}
+
+// src/react/WalletConnectionModal.tsx
+var import_react3 = require("react");
+var import_sdk = require("@bsv/sdk");
+var import_jsx_runtime3 = require("react/jsx-runtime");
+function WalletConnectionModal({
+  onLocalWallet,
+  onMobileQR,
+  installUrl = "https://desktop.bsvb.tech",
+  installLabel = "Install BSV Wallet",
+  mobileLabel = "Connect via Mobile QR",
+  installLinkProps,
+  mobileButtonProps,
+  children,
+  ...rootProps
+}) {
+  const [status, setStatus] = (0, import_react3.useState)("detecting");
+  (0, import_react3.useEffect)(() => {
+    let cancelled = false;
+    async function detect() {
+      try {
+        const wallet = new import_sdk.WalletClient("auto");
+        const ok = await wallet.isAuthenticated();
+        if (!ok) throw new Error("not authenticated");
+        if (!cancelled) {
+          setStatus("available");
+          onLocalWallet(wallet);
+        }
+      } catch {
+        if (!cancelled) setStatus("unavailable");
+      }
+    }
+    void detect();
+    return () => {
+      cancelled = true;
+    };
+  }, [onLocalWallet]);
+  if (status !== "unavailable") return null;
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { "data-wallet-detection": status, ...rootProps, children: children ?? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(import_jsx_runtime3.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+      "a",
+      {
+        href: installUrl,
+        target: "_blank",
+        rel: "noopener noreferrer",
+        ...installLinkProps,
+        children: installLabel
+      }
+    ),
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("button", { type: "button", onClick: onMobileQR, ...mobileButtonProps, children: mobileLabel })
+  ] }) });
+}
+
+// src/react/RequestLog.tsx
+var import_jsx_runtime4 = require("react/jsx-runtime");
+function RequestLog({
+  entries,
+  emptyProps,
+  entryProps,
+  children,
+  ...rootProps
+}) {
+  if (entries.length === 0) {
+    return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { "data-state": "empty", ...emptyProps, children: children ?? "No requests yet" });
+  }
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { ...rootProps, children: entries.map((entry) => {
+    const state = entry.pending ? "pending" : entry.response?.error ? "error" : "ok";
+    return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { "data-state": state, ...entryProps, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { "data-log-method": true, children: entry.request.method }),
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { "data-log-status": true, children: state }),
+      !entry.pending && entry.response && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("pre", { "data-log-result": true, children: JSON.stringify(entry.response.error ?? entry.response.result, null, 2) })
+    ] }, entry.request.requestId);
+  }) });
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  QRDisplay,
   QRPairingCode,
-  useQRPairing
+  RequestLog,
+  WalletConnectionModal,
+  useQRPairing,
+  useWalletRelayClient
 });
 //# sourceMappingURL=react.cjs.map

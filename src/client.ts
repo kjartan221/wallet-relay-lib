@@ -12,6 +12,9 @@ export type {
   WalletPairingSessionOptions,
 } from './client/WalletPairingSession.js'
 
+export { WalletRelayClient } from './client/WalletRelayClient.js'
+export type { WalletRelayClientOptions } from './client/WalletRelayClient.js'
+
 // ── Shared utilities ──────────────────────────────────────────────────────────
 
 export { parsePairingUri } from './shared/pairingUri.js'
@@ -30,5 +33,8 @@ export type {
   SessionStatus,
   PairingParams,
   ParseResult,
+  WalletRequest,
+  WalletResponse,
+  RequestLogEntry,
 } from './types.js'
 export type { CryptoParams } from './shared/crypto.js'

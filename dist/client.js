@@ -230,6 +230,131 @@ var WalletPairingSession = class {
   }
 };
 
+// src/client/WalletRelayClient.ts
+var WalletRelayClient = class {
+  constructor(options) {
+    this._session = null;
+    this._log = [];
+    this._error = null;
+    this._pollTimer = null;
+    this._expiredCount = 0;
+    this._apiUrl = (options?.apiUrl ?? "/api").replace(/\/$/, "");
+    this._pollInterval = options?.pollInterval ?? 3e3;
+    this._onSessionChange = options?.onSessionChange;
+    this._onLogChange = options?.onLogChange;
+    this._onError = options?.onError;
+  }
+  get session() {
+    return this._session;
+  }
+  get log() {
+    return this._log;
+  }
+  get error() {
+    return this._error;
+  }
+  /**
+   * Create a new pairing session and start polling for status changes.
+   * Any previously active poll loop is stopped and replaced.
+   */
+  async createSession() {
+    this._stopPolling();
+    this._expiredCount = 0;
+    this._error = null;
+    try {
+      const res = await fetch(`${this._apiUrl}/session`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      this._setSession(data);
+      this._startPolling(data.sessionId);
+      return data;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to create session";
+      this._error = msg;
+      this._onError?.(msg);
+      throw new Error(msg);
+    }
+  }
+  /**
+   * Send an RPC request to the connected mobile wallet.
+   * Appends the request (and eventually its response) to the log.
+   * Throws if there is no active session.
+   */
+  async sendRequest(method, params = {}) {
+    if (!this._session) throw new Error("No active session");
+    const requestId = crypto.randomUUID();
+    const request = { requestId, method, params, timestamp: Date.now() };
+    this._addLogEntry({ request, pending: true });
+    try {
+      const res = await fetch(`${this._apiUrl}/request/${this._session.sessionId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method, params })
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const rpc = await res.json();
+      const response = {
+        requestId,
+        result: rpc.result,
+        error: rpc.error,
+        timestamp: Date.now()
+      };
+      this._resolveLogEntry(requestId, response);
+      return response;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Request failed";
+      const response = {
+        requestId,
+        error: { code: 500, message: msg },
+        timestamp: Date.now()
+      };
+      this._resolveLogEntry(requestId, response);
+      throw new Error(msg);
+    }
+  }
+  /** Stop polling and clean up resources. Call this on component unmount. */
+  destroy() {
+    this._stopPolling();
+  }
+  // ── Private helpers ───────────────────────────────────────────────────────
+  _startPolling(sessionId) {
+    this._pollTimer = setInterval(async () => {
+      try {
+        const res = await fetch(`${this._apiUrl}/session/${sessionId}`);
+        if (!res.ok) return;
+        const updated = await res.json();
+        this._setSession({ ...this._session, ...updated });
+        if (updated.status === "expired") {
+          if (++this._expiredCount >= 2) this._stopPolling();
+        } else {
+          this._expiredCount = 0;
+        }
+      } catch {
+      }
+    }, this._pollInterval);
+  }
+  _stopPolling() {
+    if (this._pollTimer !== null) {
+      clearInterval(this._pollTimer);
+      this._pollTimer = null;
+    }
+  }
+  _setSession(session) {
+    this._session = session;
+    this._onSessionChange?.(session);
+  }
+  _addLogEntry(entry) {
+    this._log = [entry, ...this._log];
+    this._onLogChange?.(this._log);
+  }
+  _resolveLogEntry(requestId, response) {
+    this._log = this._log.map(
+      (e) => e.request.requestId === requestId ? { ...e, response, pending: false } : e
+    );
+    this._onLogChange?.(this._log);
+  }
+};
+
 // src/shared/pairingUri.ts
 function parsePairingUri(raw) {
   try {
@@ -301,6 +426,7 @@ export {
   DEFAULT_IMPLEMENTED_METHODS,
   PROTOCOL_ID,
   WalletPairingSession,
+  WalletRelayClient,
   base64urlToBytes,
   bytesToBase64url,
   decryptEnvelope,

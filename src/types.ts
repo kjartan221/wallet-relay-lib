@@ -73,3 +73,29 @@ export interface PairingParams {
 export type ParseResult =
   | { params: PairingParams; error: null }
   | { params: null; error: string }
+
+// ── Frontend request log types ────────────────────────────────────────────────
+// Used by WalletRelayClient and the React components exported from qr-lib/react.
+
+/** A wallet RPC request tracked by WalletRelayClient. */
+export interface WalletRequest {
+  requestId: string
+  method: string
+  params: unknown
+  timestamp: number
+}
+
+/** A wallet RPC response tracked by WalletRelayClient. */
+export interface WalletResponse {
+  requestId: string
+  result?: unknown
+  error?: { code: number; message: string }
+  timestamp: number
+}
+
+/** An entry in the WalletRelayClient request log. */
+export interface RequestLogEntry {
+  request: WalletRequest
+  response?: WalletResponse
+  pending: boolean
+}
