@@ -45,10 +45,12 @@ RELAY_URL=ws://localhost:3000
 ORIGIN=http://localhost:5173
 ```
 
-- `RELAY_URL` — WebSocket address mobile devices connect to. In production this must be a publicly reachable URL (e.g. `wss://yourapp.com`) — not localhost.
-- `ORIGIN` — URL your frontend runs on. Used for CORS on the backend.
+- `RELAY_URL` — WebSocket address the mobile connects to. In production use a publicly reachable URL (e.g. `wss://yourapp.com`).
+- `ORIGIN` — URL your frontend runs on. Used for CORS and embedded in the QR so the mobile knows which server to contact.
 
-> **Hostname constraint:** for `wss://` relays, `RELAY_URL` and `ORIGIN` must share the same hostname. The mobile app enforces this when scanning the QR — a mismatched relay hostname is rejected as potentially malicious. `wss://yourapp.com` + `https://yourapp.com` ✓ — `wss://relay.otherdomain.com` + `https://yourapp.com` ✗. `ws://` (local dev only) is exempt.
+> **Production note:** in a typical deployment, both `RELAY_URL` and `ORIGIN` share the same domain (`wss://yourapp.com` + `https://yourapp.com`). No extra configuration is needed. The relay can freely be on a separate domain or a third-party service — the mobile fetches the relay address from the origin server over HTTPS, making the origin's TLS certificate the trust anchor rather than hostname matching.
+
+> **Local dev with split frontend/backend:** if Vite and your Node server run on different ports, add `MOBILE_ORIGIN=http://<your-lan-ip>:3000` (the backend port) so the mobile device can reach `GET /api/session/:id`. `ORIGIN` stays as the Vite URL for browser CORS. This variable is not needed in production.
 
 ### 3. App setup
 
@@ -334,6 +336,9 @@ import { WalletPairingSession, parsePairingUri } from '@bsv/wallet-relay/client'
 const result = parsePairingUri(scannedUri)
 if (result.error) { showError(result.error); return }
 
+// Show result.params.origin to the user — this is the domain they are about to connect to
+await showApprovalUI(result.params.origin)
+
 const wallet  = new WalletClient('auto')
 const session = new WalletPairingSession(wallet, result.params, {
   // Defaults to the full BSV Browser method set — override only if needed:
@@ -350,13 +355,18 @@ session
   .on('disconnected', () => setStatus('disconnected'))
   .on('error',        msg => setError(msg))
 
+// Fetch the relay URL from the origin server over HTTPS — must be called before connect()
+await session.resolveRelay()
 await session.connect()
 ```
 
-To resume after a network drop, pass the last seen seq so replay protection picks up from where it left off:
+The relay URL is no longer embedded in the QR code. Instead `resolveRelay()` calls `GET {origin}/api/session/{topic}` over HTTPS and reads the `relay` field from the response. The origin's TLS certificate is the trust anchor — the relay itself can be hosted anywhere.
+
+To resume after a network drop, call `resolveRelay()` again before `reconnect()` (it is a lightweight HTTP call):
 
 ```ts
 const lastSeq = await SecureStore.getItemAsync(`lastseq_${topic}`)
+await session.resolveRelay()
 await session.reconnect(Number(lastSeq ?? 0))
 ```
 

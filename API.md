@@ -49,8 +49,8 @@ new WalletRelayService(options: WalletRelayServiceOptions)
 | `app` | `RouterLike` | No | — | Express-compatible app with `get` and `post` methods. REST routes are registered on it. Omit when using Next.js or another framework — call `createSession()`, `getSession()`, and `sendRequest()` from your own route handlers instead. Uses a structural duck-type to avoid nominal type conflicts in monorepos. |
 | `server` | `http.Server` | **Yes** | — | HTTP server. The WebSocket upgrade handler is attached here. |
 | `wallet` | `WalletLike` | **Yes** | — | Backend wallet for encrypting/decrypting messages. Use `ProtoWallet` with a stable private key: `new ProtoWallet(PrivateKey.fromHex(process.env.WALLET_PRIVATE_KEY!))`. The same key must be used across restarts — the mobile derives its ECDH shared secret from the backend identity key embedded in the QR code. |
-| `relayUrl` | `string` | No | `process.env.RELAY_URL` → `ws://localhost:3000` | `ws://` or `wss://` base URL of this server. Embedded in the QR pairing URI so the mobile knows where to connect. |
-| `origin` | `string` | No | `process.env.ORIGIN` → `http://localhost:5173` | `http://` or `https://` URL of the desktop frontend. Used as CORS origin and embedded in the pairing URI. |
+| `relayUrl` | `string` | No | `process.env.RELAY_URL` → `ws://localhost:3000` | `ws://` or `wss://` base URL of this server. Returned by `GET /api/session/:id` so the mobile can resolve it after scanning the QR. Not embedded in the QR itself. |
+| `origin` | `string` | No | `process.env.ORIGIN` → `http://localhost:5173` | `http://` or `https://` URL of the backend API root. Used for WebSocket origin validation and embedded in the QR pairing URI. The mobile calls `{origin}/api/session/{topic}` over HTTPS to resolve the relay URL — this is the trust anchor. In production this is your app domain. In local dev with a split Vite/Node setup, set this to the backend's LAN address so the mobile device can reach it (see `MOBILE_ORIGIN` in the quickstart). |
 | `maxSessions` | `number` | No | unlimited | Maximum number of sessions held in memory at once. `GET /api/session` returns HTTP 429 when the limit is reached. |
 | `onSessionConnected` | `(sessionId: string) => void` | No | — | Called when a mobile completes pairing and the session transitions to `'connected'`. |
 | `onSessionDisconnected` | `(sessionId: string) => void` | No | — | Called when a connected mobile disconnects and the session transitions to `'disconnected'`. |
@@ -78,10 +78,12 @@ The `desktopToken` is a cryptographically random secret that must be passed as a
 **`getSession(id)`**
 
 ```ts
-getSession(id: string): { sessionId: string; status: string } | null
+getSession(id: string): { sessionId: string; status: string; relay: string } | null
 ```
 
-Returns the current status of a session, or `null` if the session does not exist. Status values: `'pending'` | `'connected'` | `'disconnected'` | `'expired'`.
+Returns the current status and relay URL of a session, or `null` if the session does not exist. Status values: `'pending'` | `'connected'` | `'disconnected'` | `'expired'`.
+
+The `relay` field is the `ws://` or `wss://` address the mobile should connect to. This is how the mobile resolves the relay without it being embedded in the QR — it calls this endpoint over HTTPS and reads `relay` from the response.
 
 ---
 
@@ -110,8 +112,10 @@ Stops the session GC timer and closes the WebSocket server. Call on process shut
 | Method | Path | Body | Response |
 |--------|------|------|----------|
 | `GET` | `/api/session` | — | `{ sessionId, status, qrDataUrl, pairingUri, desktopToken }` |
-| `GET` | `/api/session/:id` | — | `{ sessionId, status }` |
+| `GET` | `/api/session/:id` | — | `{ sessionId, status, relay }` |
 | `POST` | `/api/request/:id` | `{ method: string, params: unknown }` | `RpcResponse` |
+
+`GET /api/session/:id` is called by the mobile app after scanning the QR to resolve the relay WebSocket URL. The mobile trusts this response because it is served over HTTPS from the origin embedded in the QR.
 
 ---
 
@@ -325,6 +329,29 @@ const session = new WalletPairingSession(wallet, params, {
 
 #### Methods
 
+**`resolveRelay()`**
+
+```ts
+resolveRelay(): Promise<string>
+```
+
+Fetches the relay WebSocket URL from the origin server. **Must be called before `connect()` or `reconnect()`** — both will throw if `resolveRelay()` has not been called first.
+
+Makes a `GET` request to `{params.origin}/api/session/{params.topic}` over HTTPS and reads the `relay` field from the response. The origin's TLS certificate is the trust anchor — the relay itself may be on any domain.
+
+Returns the resolved relay URL so the app can display it for user inspection before connecting.
+
+```ts
+// Always show params.origin to the user before calling resolveRelay()
+// so they can confirm which service they are connecting to.
+const relay = await session.resolveRelay()
+await session.connect()
+```
+
+Throws if the origin server returns a non-2xx status or does not include a `relay` field.
+
+---
+
 **`connect()`**
 
 ```ts
@@ -332,6 +359,8 @@ connect(): Promise<void>
 ```
 
 Opens the WebSocket connection to the relay and sends `pairing_approved`. Seq tracking starts from 0. Use for fresh pairings where no prior session state exists.
+
+Requires `resolveRelay()` to have been called first.
 
 ---
 
@@ -343,8 +372,11 @@ reconnect(lastSeq: number): Promise<void>
 
 Re-opens the WebSocket connection using a stored seq baseline. Replay protection resumes from `lastSeq` — any inbound message with `seq ≤ lastSeq` is dropped. Use this after a network drop when the session is still valid on the backend.
 
+Requires `resolveRelay()` to have been called first (call it again before `reconnect()` — it is a lightweight HTTP call).
+
 ```ts
 const lastSeq = await SecureStore.getItemAsync(`lastseq_${topic}`)
+await session.resolveRelay()
 await session.reconnect(Number(lastSeq ?? 0))
 ```
 
@@ -967,14 +999,14 @@ Validations performed:
 | Check | Detail |
 |-------|--------|
 | Protocol | Must be `wallet:` |
-| Required fields | `topic`, `relay`, `backendIdentityKey`, `protocolID`, `keyID`, `origin`, `expiry` all present |
+| Required fields | `topic`, `backendIdentityKey`, `protocolID`, `keyID`, `origin`, `expiry` all present |
 | Expiry | `expiry` must be in the future |
-| Relay scheme | Must be `ws://` or `wss://` |
 | Origin scheme | Must be `http://` or `https://` |
-| M1 host check | For `wss://` relays, hostname must match origin hostname (exempts `ws://` local dev) |
 | Identity key format | Must match compressed secp256k1 (`/^0[23][0-9a-fA-F]{64}$/`) |
 | protocolID | Must be valid JSON of shape `[number, string]` |
 | keyID | Must equal `topic` |
+
+The relay URL is not validated here — it is not present in the QR. The mobile fetches it from the origin server via `resolveRelay()` after the user approves the connection. Old QR codes that include a `relay` param are accepted; the param is silently ignored.
 
 ---
 
@@ -982,16 +1014,17 @@ Validations performed:
 
 ```ts
 function buildPairingUri(params: {
-  sessionId:        string
-  relayURL:         string
+  sessionId:          string
   backendIdentityKey: string
-  protocolID:       string   // JSON.stringify(PROTOCOL_ID)
-  origin:           string
-  pairingTtlMs?:    number   // default: 120_000 (2 minutes)
+  protocolID:         string   // JSON.stringify(PROTOCOL_ID)
+  origin:             string
+  pairingTtlMs?:      number   // default: 120_000 (2 minutes)
 }): string
 ```
 
 Builds a `wallet://pair?…` URI from session parameters. The `sessionId` is used as both `topic` and `keyID`. Expiry is computed as `now + pairingTtlMs`.
+
+The relay URL is intentionally omitted from the URI. The mobile fetches it from `{origin}/api/session/{sessionId}` after scanning — this is the trust anchor.
 
 ---
 
@@ -1136,14 +1169,15 @@ interface SessionInfo {
 ```ts
 interface PairingParams {
   topic:              string   // Session ID
-  relay:              string   // ws(s):// relay URL
   backendIdentityKey: string   // Compressed secp256k1 public key
   protocolID:         string   // JSON-encoded [number, string] tuple
   keyID:              string   // Always equals topic
-  origin:             string   // http(s):// desktop frontend URL
+  origin:             string   // http(s):// backend API root — mobile fetches relay from here
   expiry:             string   // Unix seconds
 }
 ```
+
+The relay URL is not part of `PairingParams`. It is fetched separately via `WalletPairingSession.resolveRelay()` after the user approves the connection.
 
 ---
 
