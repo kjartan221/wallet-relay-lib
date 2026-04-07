@@ -52,6 +52,7 @@ new WalletRelayService(options: WalletRelayServiceOptions)
 | `relayUrl` | `string` | No | `process.env.RELAY_URL` → `ws://localhost:3000` | `ws://` or `wss://` base URL of this server. Returned by `GET /api/session/:id` so the mobile can resolve it after scanning the QR. Not embedded in the QR itself. |
 | `origin` | `string` | No | `process.env.ORIGIN` → `http://localhost:5173` | `http://` or `https://` URL of the backend API root. Used for WebSocket origin validation and embedded in the QR pairing URI. The mobile calls `{origin}/api/session/{topic}` over HTTPS to resolve the relay URL — this is the trust anchor. In production this is your app domain. In local dev with a split Vite/Node setup, set this to the backend's LAN address so the mobile device can reach it (see `MOBILE_ORIGIN` in the quickstart). |
 | `maxSessions` | `number` | No | unlimited | Maximum number of sessions held in memory at once. `GET /api/session` returns HTTP 429 when the limit is reached. |
+| `signQrCodes` | `boolean` | No | `true` | Sign the QR pairing URI with the backend wallet key. The mobile can verify the signature using `verifyPairingSignature` before connecting — this proves the QR fields have not been tampered with. Set to `false` only for backward compatibility with mobile apps that do not yet call `verifyPairingSignature`. |
 | `onSessionConnected` | `(sessionId: string) => void` | No | — | Called when a mobile completes pairing and the session transitions to `'connected'`. |
 | `onSessionDisconnected` | `(sessionId: string) => void` | No | — | Called when a connected mobile disconnects and the session transitions to `'disconnected'`. |
 
@@ -549,7 +550,7 @@ type QRDisplayProps = {
 | Prop | Description |
 |------|-------------|
 | `session` | Session from `useWalletRelayClient`. `null` renders the loading placeholder (`data-state="loading"`). |
-| `onRefresh` | Called when the user clicks the refresh button (shown when `status === 'expired'`). Pass `createSession`. |
+| `onRefresh` | Called when the user clicks the refresh button (shown when `status === 'expired'` or `status === 'disconnected'`). Pass `createSession`. |
 | `loadingProps` | Props on the loading placeholder `<div>`. |
 | `statusProps` | Props on the status `<span>`. Gets `data-qr-status={status}`. |
 | `refreshButtonProps` | Props on the refresh `<button>`. |
@@ -992,19 +993,19 @@ Available from both `@bsv/wallet-relay` and `@bsv/wallet-relay/client`.
 function parsePairingUri(raw: string): ParseResult
 ```
 
-Parses and validates a `wallet://pair?…` QR code URI. Returns `{ params, error: null }` on success or `{ params: null, error: string }` on failure.
+Parses and validates a `bsv-wallet://pair?…` QR code URI. Returns `{ params, error: null }` on success or `{ params: null, error: string }` on failure.
 
 Validations performed:
 
 | Check | Detail |
 |-------|--------|
-| Protocol | Must be `wallet:` |
-| Required fields | `topic`, `backendIdentityKey`, `protocolID`, `keyID`, `origin`, `expiry` all present |
+| Protocol | Must be `bsv-wallet:` |
+| Required fields | `topic`, `backendIdentityKey`, `protocolID`, `origin`, `expiry` all present |
 | Expiry | `expiry` must be in the future |
 | Origin scheme | Must be `http://` or `https://` |
 | Identity key format | Must match compressed secp256k1 (`/^0[23][0-9a-fA-F]{64}$/`) |
 | protocolID | Must be valid JSON of shape `[number, string]` |
-| keyID | Must equal `topic` |
+| sig | Optional — passed through as-is; verify with `verifyPairingSignature` |
 
 The relay URL is not validated here — it is not present in the QR. The mobile fetches it from the origin server via `resolveRelay()` after the user approves the connection. Old QR codes that include a `relay` param are accepted; the param is silently ignored.
 
@@ -1019,12 +1020,40 @@ function buildPairingUri(params: {
   protocolID:         string   // JSON.stringify(PROTOCOL_ID)
   origin:             string
   pairingTtlMs?:      number   // default: 120_000 (2 minutes)
+  expiry?:            number   // Unix seconds — override computed expiry (required when signing, so the same value is used in both the signature and the URI)
+  sig?:               string   // base64url signature from WalletRelayService when signQrCodes is true
 }): string
 ```
 
-Builds a `wallet://pair?…` URI from session parameters. The `sessionId` is used as both `topic` and `keyID`. Expiry is computed as `now + pairingTtlMs`.
+Builds a `bsv-wallet://pair?…` URI from session parameters. The `sessionId` is used as `topic`. Expiry is computed as `Math.floor((Date.now() + pairingTtlMs) / 1000)` unless `expiry` is provided explicitly — pass an explicit value when signing so the signature and URI cover the same expiry.
 
 The relay URL is intentionally omitted from the URI. The mobile fetches it from `{origin}/api/session/{sessionId}` after scanning — this is the trust anchor.
+
+---
+
+### verifyPairingSignature
+
+```ts
+function verifyPairingSignature(params: PairingParams): Promise<boolean>
+```
+
+Verifies the `sig` field embedded in a parsed `PairingParams` object. Returns `true` immediately (no-op) when `params.sig` is absent — backward compatible with servers that have `signQrCodes: false`. Returns `false` if the signature is present but invalid or the data has been tampered with.
+
+Uses a `ProtoWallet(PrivateKey(1))` verifier with `counterparty: 'anyone'` — no mobile wallet key is required.
+
+```ts
+const { params, error } = parsePairingUri(scannedUri)
+if (error) { showError(error); return }
+
+if (!await verifyPairingSignature(params)) {
+  showError('QR code signature is invalid — do not connect')
+  return
+}
+
+// Safe to proceed with resolveRelay() and connect()
+```
+
+Available from `@bsv/wallet-relay/client` only (not the server entry — the server signs, the mobile verifies).
 
 ---
 
@@ -1084,10 +1113,10 @@ All types are exported from both `@bsv/wallet-relay` and `@bsv/wallet-relay/clie
 ### WalletLike
 
 ```ts
-type WalletLike = Pick<WalletInterface, 'getPublicKey' | 'encrypt' | 'decrypt'>
+type WalletLike = Pick<WalletInterface, 'getPublicKey' | 'encrypt' | 'decrypt' | 'createSignature'>
 ```
 
-Minimal wallet interface required by the library. Satisfied by `ProtoWallet` and `WalletClient` from `@bsv/sdk`, as well as any object that implements the three methods.
+Minimal wallet interface required by the library. Satisfied by `ProtoWallet` and `WalletClient` from `@bsv/sdk`, as well as any object that implements the four methods. `createSignature` is used by `WalletRelayService` when signing QR codes (`signQrCodes: true`).
 
 ---
 
@@ -1160,7 +1189,7 @@ interface SessionInfo {
 }
 ```
 
-`qrDataUrl`, `pairingUri`, and `desktopToken` are only present on the initial `GET /api/session` response. Status-poll responses (`GET /api/session/:id`) return only `sessionId` and `status`.
+`qrDataUrl`, `pairingUri`, and `desktopToken` are only present on the initial `GET /api/session` response. Status-poll responses (`GET /api/session/:id`) return `sessionId`, `status`, and `relay`.
 
 ---
 
@@ -1168,12 +1197,12 @@ interface SessionInfo {
 
 ```ts
 interface PairingParams {
-  topic:              string   // Session ID
-  backendIdentityKey: string   // Compressed secp256k1 public key
-  protocolID:         string   // JSON-encoded [number, string] tuple
-  keyID:              string   // Always equals topic
-  origin:             string   // http(s):// backend API root — mobile fetches relay from here
-  expiry:             string   // Unix seconds
+  topic:              string    // Session ID
+  backendIdentityKey: string    // Compressed secp256k1 public key
+  protocolID:         string    // JSON-encoded [number, string] tuple
+  origin:             string    // http(s):// backend API root — mobile fetches relay from here
+  expiry:             string    // Unix seconds
+  sig?:               string    // base64url ECDSA signature — verify with verifyPairingSignature
 }
 ```
 

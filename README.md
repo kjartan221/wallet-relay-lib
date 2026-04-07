@@ -331,10 +331,16 @@ If you are building a BSV wallet app and want to support QR pairing with desktop
 
 ```ts
 import { WalletClient } from '@bsv/sdk'
-import { WalletPairingSession, parsePairingUri } from '@bsv/wallet-relay/client'
+import { WalletPairingSession, parsePairingUri, verifyPairingSignature } from '@bsv/wallet-relay/client'
 
 const result = parsePairingUri(scannedUri)
 if (result.error) { showError(result.error); return }
+
+// Verify the QR signature before trusting any of the fields
+if (!await verifyPairingSignature(result.params)) {
+  showError('QR code signature is invalid — do not connect')
+  return
+}
 
 // Show result.params.origin to the user — this is the domain they are about to connect to
 await showApprovalUI(result.params.origin)
@@ -441,7 +447,7 @@ All messages use BSV wallet-native ECDH via `@bsv/sdk`. No custom crypto.
 - The relay routes ciphertext blobs — it never decrypts anything
 - The pairing bootstrap sends `mobileIdentityKey` unencrypted in the outer envelope once (on `pairing_approved`) so the backend can verify the inner payload. All subsequent messages use only the stored key.
 
-`WalletLike` throughout is `Pick<WalletInterface, 'getPublicKey' | 'encrypt' | 'decrypt'>` — satisfied by both `ProtoWallet` and `WalletClient` from `@bsv/sdk`.
+`WalletLike` throughout is `Pick<WalletInterface, 'getPublicKey' | 'encrypt' | 'decrypt' | 'createSignature'>` — satisfied by both `ProtoWallet` and `WalletClient` from `@bsv/sdk`.
 
 ---
 
