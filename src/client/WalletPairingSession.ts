@@ -10,8 +10,9 @@ export type PairingSessionStatus = 'idle' | 'connecting' | 'connected' | 'discon
  */
 export const DEFAULT_IMPLEMENTED_METHODS: ReadonlySet<WalletMethodName> = new Set<WalletMethodName>([
   'getPublicKey', 'listOutputs', 'createAction', 'signAction', 'createSignature',
-  'listActions', 'internalizeAction', 'acquireCertificate',
+  'verifySignature', 'listActions', 'internalizeAction', 'acquireCertificate',
   'relinquishCertificate', 'listCertificates', 'revealCounterpartyKeyLinkage',
+  'createHmac', 'verifyHmac', 'encrypt', 'decrypt',
 ])
 
 /**

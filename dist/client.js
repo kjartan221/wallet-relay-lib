@@ -36,12 +36,17 @@ var DEFAULT_IMPLEMENTED_METHODS = /* @__PURE__ */ new Set([
   "createAction",
   "signAction",
   "createSignature",
+  "verifySignature",
   "listActions",
   "internalizeAction",
   "acquireCertificate",
   "relinquishCertificate",
   "listCertificates",
-  "revealCounterpartyKeyLinkage"
+  "revealCounterpartyKeyLinkage",
+  "createHmac",
+  "verifyHmac",
+  "encrypt",
+  "decrypt"
 ]);
 var DEFAULT_AUTO_APPROVE_METHODS = /* @__PURE__ */ new Set(["getPublicKey"]);
 var WalletPairingSession = class {

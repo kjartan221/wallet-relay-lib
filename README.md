@@ -4,6 +4,8 @@ BSV mobile wallet QR pairing — relay server, session management, and desktop f
 
 Lets any web app offer "connect via mobile wallet" as a signing or authentication option. The desktop shows a QR code; the user scans it with their BSV wallet app; from that point all wallet operations are handled by the mobile over an encrypted WebSocket relay. Wallet keys never leave the mobile device. The relay never sees plaintext.
 
+> **Early release — use at your own discretion.** This library is functional and used in production internally, but the API may change without notice. No stability guarantees are made until a v1.0 release is tagged.
+
 ---
 
 ## Who needs what
