@@ -201,66 +201,30 @@ export function App() {
 
 ### Next.js setup
 
-**Which deployment model are you using?**
+The relay WebSocket is decoupled from your origin server — the mobile fetches the relay URL from your origin over HTTPS after scanning the QR. This means the WebSocket relay can run anywhere: a separate persistent service, or a third-party provider (Ably, Pusher, Soketi).
 
 | Deployment | Supported | Notes |
 |---|---|---|
-| Self-hosted / VPS / container | ✓ | Use the custom server below |
-| Vercel (serverless) | ✗ | WebSockets require a persistent process — see note below |
-| Netlify / Lambda / edge | ✗ | Same constraint |
+| Self-hosted / VPS / container | ✓ | Run `WalletRelayService` with built-in WebSocket relay |
+| Vercel / Netlify / serverless | ✓ | REST routes in serverless functions; point `RELAY_URL` at a separate relay service or third-party provider |
 
-> **Vercel and other serverless platforms cannot host the WebSocket relay.** The `/ws` endpoint requires a persistent Node.js process. Serverless functions are stateless and terminated after each response — there is no way to hold a WebSocket connection open. If you are deploying to Vercel, run the relay as a separate small service (a VPS, Railway, Render, or Fly.io instance) and point `RELAY_URL` at it. Your Next.js app handles only the REST routes as a thin proxy.
+**Relay service** — deploy a minimal Express + `WalletRelayService` on Railway, Render, or Fly.io. This handles the WebSocket connections and session state. Set `RELAY_URL` in your Next.js environment to its `wss://` address.
 
-For self-hosted Next.js, you must use a **custom server** so you control the underlying `http.Server` instance. The WebSocket endpoint attaches there. The REST routes (`/api/session`, `/api/session/:id`, `/api/request/:id`) are handled by normal Next.js API routes that call `relay` methods directly.
-
-**Step 1 — custom server** (create `server.ts` at the project root, then update `package.json` to run it instead of `next start`):
-
-```ts
-// server.ts
-import { createServer } from 'http'
-import { parse } from 'url'
-import next from 'next'
-import { ProtoWallet, PrivateKey } from '@bsv/sdk'
-import { WalletRelayService } from '@bsv/wallet-relay'
-
-const dev    = process.env.NODE_ENV !== 'production'
-const app    = next({ dev })
-const handle = app.getRequestHandler()
-
-await app.prepare()
-
-const server = createServer((req, res) => {
-  handle(req, res, parse(req.url!, true))
-})
-
-export const relay = new WalletRelayService({
-  server,
-  wallet: new ProtoWallet(PrivateKey.fromHex(process.env.WALLET_PRIVATE_KEY!)),
-})
-
-server.listen(3000)
-```
-
-```json
-// package.json — replace "next start" with the custom server
-{ "scripts": { "start": "tsx server.ts", "dev": "tsx server.ts" } }
-```
-
-**Step 2 — API routes** call `relay` methods directly. You must forward `X-Desktop-Token` on the request route — the library cannot do it for you since it has no access to the incoming request object.
+**Next.js API routes** call `relay` methods directly — no custom server required. You must forward `X-Desktop-Token` on the request route.
 
 ```ts
 // app/api/session/route.ts
-import { relay } from '@/server' // the custom server exports relay
+import { relay } from '@/lib/relay'  // your WalletRelayService singleton
 
 export async function GET() {
   const info = await relay.createSession()
-  return Response.json(info) // includes desktopToken — WalletRelayClient stores it automatically
+  return Response.json(info)
 }
 ```
 
 ```ts
 // app/api/session/[id]/route.ts
-import { relay } from '@/server'
+import { relay } from '@/lib/relay'
 
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
   const info = relay.getSession(params.id)
@@ -271,11 +235,10 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 
 ```ts
 // app/api/request/[id]/route.ts
-import { relay } from '@/server'
+import { relay } from '@/lib/relay'
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   const { method, params: rpcParams } = await req.json() as { method: string; params: unknown }
-  // Forward the desktop token — required to authenticate the request
   const token = req.headers.get('x-desktop-token') ?? undefined
   try {
     const result = await relay.sendRequest(params.id, method, rpcParams, token)
