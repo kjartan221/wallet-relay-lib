@@ -291,6 +291,7 @@ var WalletRelayClient = class {
    * Prefer this over `destroy()` when you want the mobile app to be notified.
    */
   async disconnect() {
+    this._stopPolling();
     if (this._session?.sessionId && this._desktopToken) {
       try {
         await fetch(`${this._apiUrl}/session/${this._session.sessionId}`, {
@@ -300,7 +301,7 @@ var WalletRelayClient = class {
       } catch {
       }
     }
-    this.destroy();
+    this._desktopToken = null;
   }
   /** Stop polling and clean up resources. Call this on component unmount. */
   destroy() {
