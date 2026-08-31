@@ -1,5 +1,7 @@
 # @bsv/wallet-relay
 
+> **This repository is an outdated snapshot.** The library is now maintained at **[bsv-blockchain/ts-stack](https://github.com/bsv-blockchain/ts-stack/tree/main/packages/wallet/ts-wallet-relay)** under `packages/wallet/ts-wallet-relay`, and published on npm as [`@bsv/wallet-relay`](https://www.npmjs.com/package/@bsv/wallet-relay). Please file issues and PRs there.
+
 BSV mobile wallet QR pairing — relay server, session management, and desktop frontend utilities.
 
 Lets any web app offer "connect via mobile wallet" as a signing or authentication option. The desktop shows a QR code; the user scans it with their BSV wallet app; from that point all wallet operations are handled by the mobile over an encrypted WebSocket relay. Wallet keys never leave the mobile device. The relay never sees plaintext.
